@@ -1,0 +1,52 @@
+# Quality Gate Configuration
+# vibeforcer lint
+
+[quality_gate]
+version = "{version}"
+
+[paths]
+src = "src"
+tests = "tests"
+exclude_dirs = [".venv", "__pycache__", "node_modules", ".git"]
+exclude_patterns = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
+
+[thresholds]
+max_complexity = 12
+max_params = 4
+max_method_lines = 50
+max_line_length = 120
+max_nesting_depth = 4
+max_god_class_methods = 15
+max_god_class_lines = 400
+max_module_lines_soft = 350
+max_module_lines_hard = 600
+max_test_lines = 35
+max_eager_test_calls = 7
+feature_envy_threshold = 0.60
+feature_envy_min_accesses = 6
+
+[magic_values]
+allowed_numbers = [0, 1, 2, 3, -1, 10, 100, 1000]
+allowed_strings = ["", " ", "\n", "\t", "utf-8"]
+
+[wrappers]
+allowed = []
+
+[logging]
+logger_variable = "logger"
+infrastructure_path = ""
+disallowed_names = ["_log", "_logger", "log", "LOG"]
+
+[type_safety]
+ban_any = true
+ban_type_suppressions = true
+
+[exception_safety]
+ban_broad_except_swallow = true
+ban_silent_except = true
+ban_silent_fallback = true
+
+[test_smells]
+max_consecutive_bare_asserts = 3
+ban_conditional_assertions = true
+ban_fixtures_outside_conftest = true
