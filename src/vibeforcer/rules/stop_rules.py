@@ -1,7 +1,33 @@
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule
+
+
+def _is_worktree(path_str: str) -> bool:
+    """Check if a path is inside a git worktree (not the main working tree).
+
+    A worktree has a .git *file* (not directory) containing "gitdir: ..." pointing
+    back to the main repo's .git/worktrees/<name>/ directory.
+    """
+    try:
+        p = Path(path_str).resolve()
+        # Walk up to find the git toplevel
+        result = subprocess.run(
+            ["git", "-C", str(p) if p.is_dir() else str(p.parent), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode != 0:
+            return False
+        toplevel = Path(result.stdout.strip())
+        git_entry = toplevel / ".git"
+        # In a worktree, .git is a file (not a directory) containing "gitdir: ..."
+        return git_entry.is_file()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 class IgnorePreexistingRule(Rule):
@@ -135,7 +161,13 @@ class WarnLargeFileRule(Rule):
 
 
 class HookInfraExecProtectionRule(Rule):
-    """Block execution of the hook layer itself or its config."""
+    """Block modification of the hook layer infrastructure and config.
+
+    Protects installed vibeforcer paths and its XDG config directory from
+    agent-driven edits. The protection is skipped when the target path is
+    inside a git worktree — this allows developing vibeforcer in a worktree
+    of its source repo without the hooks fighting back.
+    """
     rule_id = "GLOBAL-BUILTIN-HOOK-INFRA-EXEC"
     title = "Hook layer execution protection"
     events = ("PreToolUse", "PermissionRequest")
@@ -147,6 +179,12 @@ class HookInfraExecProtectionRule(Rule):
         ".claude/hooks/",
     )
 
+    # XDG config paths that should be protected regardless of worktree status
+    CONFIG_FRAGMENTS = (
+        "config/vibeforcer/config.json",
+        "config/vibeforcer/rules",
+    )
+
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         enabled = ctx.config.enabled_rules.get(self.rule_id)
         if enabled is not None and not enabled:
@@ -155,37 +193,51 @@ class HookInfraExecProtectionRule(Rule):
             return []
         for path_value in ctx.candidate_paths:
             lowered = path_value.lower()
-            for fragment in self.PROTECTED_FRAGMENTS:
-                if fragment in lowered:
+
+            # Check config fragments — always protected (no worktree exception)
+            for cfrag in self.CONFIG_FRAGMENTS:
+                if cfrag in lowered:
                     if ctx.tool_name and ctx.tool_name.lower() == "bash":
                         cmd = ctx.bash_command.lower()
                         from vibeforcer.rules.common import _is_safe_read_shell
                         if _is_safe_read_shell(cmd):
                             return []
-                        # Bash command touches hook infrastructure and is NOT read-only
-                        return [
-                            RuleFinding(
-                                rule_id=self.rule_id,
-                                title=self.title,
-                                severity=Severity.CRITICAL,
-                                decision="deny",
-                                message=f"Modifying the hook layer infrastructure ({path_value}) is blocked. These files are protected.",
-                                metadata={"path": path_value, "fragment": fragment},
-                            )
-                        ]
+                        return self._deny(path_value, cfrag, "config")
                     from vibeforcer.util.payloads import is_edit_like_tool
                     if is_edit_like_tool(ctx.tool_name):
-                        return [
-                            RuleFinding(
-                                rule_id=self.rule_id,
-                                title=self.title,
-                                severity=Severity.CRITICAL,
-                                decision="deny",
-                                message=f"Modifying the hook layer infrastructure ({path_value}) is blocked. These files are protected.",
-                                metadata={"path": path_value, "fragment": fragment},
-                            )
-                        ]
+                        return self._deny(path_value, cfrag, "config")
+
+            # Check source/infra fragments — skip if inside a worktree
+            for fragment in self.PROTECTED_FRAGMENTS:
+                if fragment in lowered:
+                    # Worktree exception: developing in a worktree is allowed
+                    if _is_worktree(path_value):
+                        return []
+
+                    if ctx.tool_name and ctx.tool_name.lower() == "bash":
+                        cmd = ctx.bash_command.lower()
+                        from vibeforcer.rules.common import _is_safe_read_shell
+                        if _is_safe_read_shell(cmd):
+                            return []
+                        return self._deny(path_value, fragment, "infra")
+                    from vibeforcer.util.payloads import is_edit_like_tool
+                    if is_edit_like_tool(ctx.tool_name):
+                        return self._deny(path_value, fragment, "infra")
         return []
+
+    @staticmethod
+    def _deny(path_value: str, fragment: str, kind: str) -> list[RuleFinding]:
+        label = "config" if kind == "config" else "infrastructure"
+        return [
+            RuleFinding(
+                rule_id="GLOBAL-BUILTIN-HOOK-INFRA-EXEC",
+                title="Hook layer execution protection",
+                severity=Severity.CRITICAL,
+                decision="deny",
+                message=f"Modifying the hook layer {label} ({path_value}) is blocked. These files are protected.",
+                metadata={"path": path_value, "fragment": fragment, "kind": kind},
+            )
+        ]
 
 
 class RulebookSecurityRule(Rule):
