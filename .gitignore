@@ -11,3 +11,4 @@ build/
 .nox/
 .pytest_cache/
 .mypy_cache/
+repomix-output.xml
