@@ -26,7 +26,6 @@ classifiers = [
 [project.scripts]
 vibeforcer = "vibeforcer.cli:safe_main"
 vfc = "vibeforcer.cli:safe_main"
-isx = "vibeforcer.cli:safe_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

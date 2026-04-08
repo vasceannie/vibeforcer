@@ -661,39 +661,7 @@ def _dispatch_search(args: argparse.Namespace) -> int:
     return 0
 
 
-def _isx_main(argv: list[str] | None = None) -> int:
-    """Entry point when invoked as ``isx``."""
-    from vibeforcer.search.cli import build_search_parser
-
-    parser = build_search_parser(subparsers=None)
-    args = parser.parse_args(argv)
-
-    search_cmd = getattr(args, "search_command", None)
-    if search_cmd and hasattr(args, "func"):
-        return _run_search_func(args)
-
-    query_args = getattr(args, "query_args", None)
-    if query_args:
-        from vibeforcer.search.cli import cmd_search
-        args.query = query_args
-        args.func = cmd_search
-        return _run_search_func(args)
-
-    parser.print_help()
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
-    import os
-
-    # Detect invocation name for isx compatibility
-    prog_name = os.path.basename(sys.argv[0]) if sys.argv else "vibeforcer"
-    is_isx = prog_name in ("isx",)
-
-    if is_isx:
-        # When invoked as `isx`, route directly to search subcommands
-        return _isx_main(argv)
-
     parser = build_parser()
     args = parser.parse_args(argv)
 
