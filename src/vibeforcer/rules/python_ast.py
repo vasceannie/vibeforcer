@@ -6,7 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, final
 
-from typing_extensions import override
+try:
+    from typing import override
+except ImportError:  # pragma: no cover, Python <3.12
+    from typing_extensions import override
 
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule
