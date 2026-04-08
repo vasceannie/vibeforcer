@@ -262,6 +262,241 @@ def cmd_version(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lint(args: argparse.Namespace) -> int:
+    """Run batch code quality analysis on a project.
+
+    Absorbed from the standalone quality-gate tool.
+    Supports: check, baseline, init, update
+    """
+    lint_command = getattr(args, "lint_command", None)
+    if not lint_command:
+        # Default to check if no subcommand given
+        lint_command = "check"
+        args.path = args.path if hasattr(args, "path") else "."
+
+    root = Path(getattr(args, "path", ".") or ".").resolve()
+
+    if lint_command == "check":
+        return _lint_check(root)
+    elif lint_command == "baseline":
+        return _lint_baseline(root)
+    elif lint_command == "init":
+        return _lint_init(root)
+    elif lint_command == "update":
+        return _lint_update(root, dry_run=getattr(args, "dry_run", False))
+    return 1
+
+
+def _lint_check(root: Path) -> int:
+    from vibeforcer.lint._config import load_config as load_qg_config, set_config as set_qg_config
+    from vibeforcer.lint._config import QualityConfig
+    from vibeforcer.lint._helpers import find_source_files, find_test_files, parse_files
+    from vibeforcer.lint._baseline import Violation, load_baseline
+    from vibeforcer.lint import __version__ as lint_version
+
+    cfg = load_qg_config(root)
+    set_qg_config(cfg)
+
+    src_files = find_source_files()
+    test_files = find_test_files()
+
+    print(f"vibeforcer lint {lint_version}")
+    print(f"  project: {cfg.project_root}")
+    print(f"  src:     {cfg.src_root}  ({len(src_files)} files)")
+    print(f"  tests:   {cfg.tests_root}  ({len(test_files)} files)")
+    print()
+
+    from vibeforcer.lint._collectors import run_all_collectors
+
+    baseline = load_baseline()
+    collectors = run_all_collectors(src_files, test_files)
+
+    total_violations = 0
+    total_new = 0
+    total_fixed = 0
+    _SUPPORTS_COLOR = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+
+    def _c(code, text): return f"\033[{code}m{text}\033[0m" if _SUPPORTS_COLOR else text
+
+    for rule_name, violations in collectors:
+        if not violations:
+            continue
+        allowed = baseline.get(rule_name, set())
+        current_ids = {v.stable_id for v in violations}
+        new_ids = current_ids - allowed
+        fixed_ids = allowed - current_ids
+        new_violations = [v for v in violations if v.stable_id in new_ids]
+
+        total_violations += len(violations)
+        total_new += len(new_violations)
+        total_fixed += len(fixed_ids)
+
+        if new_violations:
+            status = _c("31", f"\u2717 {rule_name}")
+        else:
+            status = _c("32", f"\u2713 {rule_name}")
+
+        counts = f"{len(violations)} total"
+        if new_violations:
+            counts += f", {_c('31', f'{len(new_violations)} NEW')}"
+        if fixed_ids:
+            counts += f", {_c('32', f'{len(fixed_ids)} fixed')}"
+        if allowed:
+            counts += f" {_c('2', f'(baseline: {len(allowed)})')}"
+
+        print(f"  {status}  {counts}")
+
+        for v in new_violations[:5]:
+            print(f"    {_c('31', '+')} {v}")
+        if len(new_violations) > 5:
+            print(f"    {_c('2', f'... and {len(new_violations) - 5} more')}")
+
+    print()
+    if total_new == 0:
+        print(_c("32", f"\u2713 No new violations ({total_violations} total, all baselined)"))
+        if total_fixed:
+            print(_c("33", f"  \u2139 {total_fixed} fixed \u2014 run `vibeforcer lint baseline` to lock that in"))
+        return 0
+    else:
+        print(_c("31", f"\u2717 {total_new} new violation(s) introduced"))
+        print(f"  {total_violations} total across all rules")
+        return 1
+
+
+def _lint_baseline(root: Path) -> int:
+    from vibeforcer.lint._config import load_config as load_qg_config, set_config as set_qg_config
+    from vibeforcer.lint._helpers import find_source_files, find_test_files
+    from vibeforcer.lint._baseline import save_baseline, Violation
+    from vibeforcer.lint import __version__ as lint_version
+    from vibeforcer.lint._collectors import run_all_collectors
+
+    cfg = load_qg_config(root)
+    set_qg_config(cfg)
+
+    src_files = find_source_files()
+    test_files = find_test_files()
+
+    print(f"vibeforcer lint baseline {lint_version}")
+    print(f"  project: {cfg.project_root}")
+    print()
+
+    collectors = run_all_collectors(src_files, test_files)
+    all_violations = {}
+    for rule_name, violations in collectors:
+        if violations:
+            all_violations[rule_name] = violations
+            print(f"  {rule_name}: {len(violations)}")
+
+    save_baseline(all_violations)
+
+    total = sum(len(v) for v in all_violations.values())
+    bp = cfg.baseline_path or (cfg.project_root / "baselines.json")
+    print()
+    print(f"\u2713 Baseline saved: {total} violation(s) across {len(all_violations)} rule(s)")
+    print(f"  \u2192 {bp}")
+    return 0
+
+
+def _lint_init(root: Path) -> int:
+    from vibeforcer.lint._config import QualityConfig
+    root.mkdir(parents=True, exist_ok=True)
+    dest = root / "quality_gate.toml"
+    if dest.exists():
+        print(f"Already exists: {dest}")
+        print("  To add missing keys, run: vibeforcer lint update")
+        return 1
+
+    from vibeforcer.lint import __version__ as lint_version
+    template = _DEFAULT_QG_TOML.format(version=lint_version)
+    dest.write_text(template, encoding="utf-8")
+    print(f"\u2713 Created {dest}")
+    print("  Edit it to match your project, then run: vibeforcer lint check")
+    return 0
+
+
+def _lint_update(root: Path, *, dry_run: bool = False) -> int:
+    from vibeforcer.lint._updater import update_toml_file
+
+    dest = root / "quality_gate.toml"
+    if not dest.exists():
+        print(f"No quality_gate.toml found at {root}")
+        print("  Run `vibeforcer lint init` first.")
+        return 1
+
+    missing = update_toml_file(dest, dry_run=dry_run)
+    if not missing:
+        print("\u2713 Config is up to date")
+        return 0
+
+    total_keys = sum(len(keys) for keys in missing.values())
+    action = "Would add" if dry_run else "Added"
+    print(f"{action} {total_keys} key(s) across {len(missing)} section(s):")
+    for section, keys in missing.items():
+        for key in keys:
+            print(f"  [{section}] {key}")
+    if dry_run:
+        print("  (dry run)")
+    else:
+        print(f"\u2713 Updated {dest}")
+    return 0
+
+
+_DEFAULT_QG_TOML = """\
+# Quality Gate Configuration
+# vibeforcer lint
+
+[quality_gate]
+version = "{version}"
+
+[paths]
+src = "src"
+tests = "tests"
+exclude_dirs = [".venv", "__pycache__", "node_modules", ".git"]
+exclude_patterns = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
+
+[thresholds]
+max_complexity = 12
+max_params = 4
+max_method_lines = 50
+max_line_length = 120
+max_nesting_depth = 4
+max_god_class_methods = 15
+max_god_class_lines = 400
+max_module_lines_soft = 350
+max_module_lines_hard = 600
+max_test_lines = 35
+max_eager_test_calls = 7
+feature_envy_threshold = 0.60
+feature_envy_min_accesses = 6
+
+[magic_values]
+allowed_numbers = [0, 1, 2, 3, -1, 10, 100, 1000]
+allowed_strings = ["", " ", "\n", "\t", "utf-8"]
+
+[wrappers]
+allowed = []
+
+[logging]
+logger_variable = "logger"
+infrastructure_path = ""
+disallowed_names = ["_log", "_logger", "log", "LOG"]
+
+[type_safety]
+ban_any = true
+ban_type_suppressions = true
+
+[exception_safety]
+ban_broad_except_swallow = true
+ban_silent_except = true
+ban_silent_fallback = true
+
+[test_smells]
+max_consecutive_bare_asserts = 3
+ban_conditional_assertions = true
+ban_fixtures_outside_conftest = true
+"""
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -377,6 +612,34 @@ def build_parser() -> argparse.ArgumentParser:
     # -- test --
     test = subparsers.add_parser("test", help="Run self-test / smoke test")
     test.set_defaults(func=cmd_test)
+
+    # -- lint --
+    lint_parser = subparsers.add_parser(
+        "lint",
+        help="Batch code quality analysis (check, baseline, init, update)",
+    )
+    lint_sub = lint_parser.add_subparsers(dest="lint_command")
+
+    lint_check = lint_sub.add_parser("check", help="Lint a project for violations")
+    lint_check.add_argument("path", nargs="?", default=".", help="Project root (default: .)")
+    lint_check.set_defaults(func=cmd_lint, lint_command="check")
+
+    lint_baseline = lint_sub.add_parser("baseline", help="Generate/update baselines.json")
+    lint_baseline.add_argument("path", nargs="?", default=".", help="Project root (default: .)")
+    lint_baseline.set_defaults(func=cmd_lint, lint_command="baseline")
+
+    lint_init = lint_sub.add_parser("init", help="Scaffold quality_gate.toml")
+    lint_init.add_argument("path", nargs="?", default=".", help="Target dir (default: .)")
+    lint_init.set_defaults(func=cmd_lint, lint_command="init")
+
+    lint_update = lint_sub.add_parser("update", help="Add missing config keys")
+    lint_update.add_argument("path", nargs="?", default=".", help="Project root (default: .)")
+    lint_update.add_argument("--dry-run", action="store_true")
+    lint_update.set_defaults(func=cmd_lint, lint_command="update")
+
+    # Default lint (no subcommand) defaults to check
+    lint_parser.add_argument("path", nargs="?", default=".", help="Project root (default: .)")
+    lint_parser.set_defaults(func=cmd_lint, lint_command="check")
 
     # -- version --
     version = subparsers.add_parser("version", help="Print version")
