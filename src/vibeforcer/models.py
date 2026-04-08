@@ -90,6 +90,7 @@ class RuntimeConfig:
     python_max_line_length: int = 120
     python_feature_envy_threshold: float = 0.60
     python_feature_envy_min_accesses: int = 6
+    python_import_fanout_limit: int = 5
     # Global skip / per-repo exception support
     skip_paths: list[str] = field(default_factory=list)
     skip_if_file_exists: list[str] = field(default_factory=lambda: [".noqualitygate", ".no-quality-gate"])

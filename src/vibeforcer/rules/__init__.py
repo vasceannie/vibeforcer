@@ -23,6 +23,7 @@ from vibeforcer.rules.python_ast import (
     PythonLongParameterRule,
     PythonThinWrapperRule,
     PythonFlatFileSiblingsRule,
+    PythonImportFanoutRule,
 )
 from vibeforcer.rules.regex_rule import RegexRule
 from vibeforcer.rules.langgraph import (
@@ -63,6 +64,7 @@ def build_rules(ctx: HookContext) -> list[Rule]:
         PythonCyclomaticComplexityRule(),
         PythonDeadCodeRule(),
         PythonFlatFileSiblingsRule(),
+        PythonImportFanoutRule(),
         BaselineGuardRule(),
         IgnorePreexistingRule(),
         RequireMakeQualityRule(),

@@ -9,7 +9,7 @@ try:
     import tomllib
 except ModuleNotFoundError:
     try:
-        import tomli as tomllib  # type: ignore[no-redef]
+        import tomli as tomllib  # type: ignore[no-redef]  # pyright: ignore[reportMissingImports]
     except ModuleNotFoundError:
         tomllib = None  # type: ignore[assignment]
 
@@ -170,12 +170,12 @@ def load_config(root: Path | None = None) -> RuntimeConfig:
         if isinstance(item, dict)
     ]
 
-    python_ast = raw.get("python_ast", {})
-    post_edit_quality = raw.get("post_edit_quality", {})
-    async_jobs = raw.get("async_jobs", {})
+    python_ast: dict[str, Any] = raw.get("python_ast", {})
+    post_edit_quality: dict[str, Any] = raw.get("post_edit_quality", {})
+    async_jobs: dict[str, Any] = raw.get("async_jobs", {})
 
     # Trace directory: relative to root, or absolute
-    trace_dir_raw = raw.get("trace_dir", "logs")
+    trace_dir_raw: str = str(raw.get("trace_dir", "logs"))
     trace_dir_path = Path(trace_dir_raw)
     if trace_dir_path.is_absolute():
         trace_dir = trace_dir_path
@@ -185,15 +185,15 @@ def load_config(root: Path | None = None) -> RuntimeConfig:
     (trace_dir / "async").mkdir(parents=True, exist_ok=True)
 
     # Prompt context: resolve relative to config_path's parent or root
-    prompt_context_files = list(raw.get("prompt_context_files", []))
+    prompt_context_files: list[str] = [str(p) for p in raw.get("prompt_context_files", [])]
 
     # Overlay thresholds from quality_gate.toml (per-repo)
     repo_root = Path.cwd().resolve()
     toml_data = _load_toml(repo_root)
-    toml_thresholds = toml_data.get("thresholds", {})
+    toml_thresholds: dict[str, Any] = toml_data.get("thresholds", {})
 
     # Per-repo rule overrides
-    qg_section = toml_data.get("quality_gate", {})
+    qg_section: dict[str, Any] = toml_data.get("quality_gate", {})
     disabled_rules_list: list[str] = []
     severity_overrides_map: dict[str, str] = {}
     if isinstance(qg_section, dict):
@@ -236,6 +236,7 @@ def load_config(root: Path | None = None) -> RuntimeConfig:
         python_max_line_length=int(toml_thresholds.get("max_line_length", 120)),
         python_feature_envy_threshold=float(toml_thresholds.get("feature_envy_threshold", 0.60)),
         python_feature_envy_min_accesses=int(toml_thresholds.get("feature_envy_min_accesses", 6)),
+        python_import_fanout_limit=int(toml_thresholds.get("import_fanout_limit", 5)),
         skip_paths=skip_paths,
         skip_if_file_exists=skip_if_file_exists,
         disabled_rules=disabled_rules_list,
