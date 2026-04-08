@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+from collections import Counter, defaultdict
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vibeforcer.models import RuleFinding, Severity
@@ -780,3 +781,112 @@ class PythonFlatFileSiblingsRule(Rule):
                         )
                     )
         return findings
+
+
+# ---------------------------------------------------------------------------
+# PY-IMPORT-001: Import fanout suggests facade opportunity
+# ---------------------------------------------------------------------------
+
+# Prefixes that signal a function family (parse_*, build_*, validate_*, …)
+_FAMILY_PREFIXES = (
+    "parse_", "build_", "create_", "make_", "get_", "set_",
+    "validate_", "check_", "format_", "render_", "load_", "save_",
+    "encode_", "decode_", "serialize_", "deserialize_",
+)
+
+
+def _detect_family_prefix(names: list[str]) -> str | None:
+    """Return the shared prefix if 3+ names share one, else None."""
+    prefix_counts: Counter[str] = Counter()
+    for name in names:
+        for prefix in _FAMILY_PREFIXES:
+            if name.startswith(prefix):
+                prefix_counts[prefix] += 1
+                break
+    for prefix, count in prefix_counts.most_common(1):
+        if count >= 3:
+            return prefix
+    return None
+
+
+class PythonImportFanoutRule(Rule):
+    """PY-IMPORT-001: Detect when too many names are imported from one module.
+
+    A high import count from a single module signals that the caller should
+    either use a namespace import or that the source module needs a facade.
+    """
+
+    rule_id = "PY-IMPORT-001"
+    title = "Import fanout suggests facade opportunity"
+    events = ("PreToolUse", "PermissionRequest", "PostToolUse")
+
+    def _check_source(
+        self,
+        source: str,
+        path_value: str,
+        ctx: "HookContext",
+    ) -> list[RuleFinding]:
+        module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
+        if module is None:
+            return []
+
+        limit = ctx.config.python_import_fanout_limit
+
+        # Collect names imported per source module (top-level only)
+        names_by_module: dict[str, list[str]] = defaultdict(list)
+        for node in module.body:
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            if node.module is None:
+                continue
+            for alias in node.names:
+                imported_name = alias.asname if alias.asname else alias.name
+                names_by_module[node.module].append(imported_name)
+
+        findings: list[RuleFinding] = []
+        for mod_name, names in names_by_module.items():
+            if len(names) <= limit:
+                continue
+
+            family_prefix = _detect_family_prefix(names)
+            names_preview = ", ".join(names[:6])
+            if len(names) > 6:
+                names_preview += ", ..."
+
+            if family_prefix is not None:
+                severity = Severity.MEDIUM
+                family_msg = (
+                    f" Several names share the `{family_prefix}` prefix"
+                    " \u2014 strong signal for a service class or facade."
+                )
+            else:
+                severity = Severity.LOW
+                family_msg = ""
+
+            message = (
+                f"`{path_value}` imports {len(names)} names from `{mod_name}` "
+                f"({names_preview}).{family_msg} "
+                f"Consider `import {mod_name}` and access via namespace, "
+                f"or introduce a facade/service class to reduce coupling."
+            )
+
+            findings.append(
+                RuleFinding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    severity=severity,
+                    decision="context",
+                    message=message,
+                    metadata={
+                        "path": path_value,
+                        "module": mod_name,
+                        "import_count": len(names),
+                        "names": names,
+                        "family_prefix": family_prefix,
+                    },
+                )
+            )
+        return findings
+
+    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
+        return _evaluate_common(self, ctx, self._check_source)

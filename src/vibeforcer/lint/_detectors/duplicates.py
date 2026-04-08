@@ -102,6 +102,10 @@ def _structure_hash(canonical: str) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
+def _is_import_stmt(stmt: ast.stmt) -> bool:
+    """Return True when *stmt* is a plain or from-import statement."""
+    return isinstance(stmt, (ast.Import, ast.ImportFrom))
+
 
 def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
     """Return body with the leading docstring removed, if present."""
@@ -272,6 +276,8 @@ def _collect_block_windows(
                 continue
             norms = [_normalize_ast(stmt) for stmt in body]
             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
+                if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                    continue
                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
                 end = getattr(body[i + _MIN_BLOCK_SIZE - 1], "end_lineno", body[i].lineno)
                 groups[h].append((pf.rel, scope, body[i].lineno, end))

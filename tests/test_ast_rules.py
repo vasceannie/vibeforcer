@@ -189,5 +189,63 @@ class TestDeadCode(unittest.TestCase):
         _assert_not_denied(self, result)
 
 
+class TestImportFanout(unittest.TestCase):
+    def _make_payload(self, code: str) -> dict:
+        return {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/main.py", "new_string": code},
+            "cwd": str(BUNDLE_ROOT),
+        }
+
+    def test_at_threshold_ok(self):
+        """Exactly 5 imports from one module -- at threshold, not flagged."""
+        code = "from mymodule import a, b, c, d, e"
+        result = evaluate_payload(self._make_payload(code))
+        _assert_not_denied(self, result)
+        rule_ids = {f.rule_id for f in result.findings}
+        self.assertNotIn("PY-IMPORT-001", rule_ids)
+
+    def test_over_threshold_context_only(self):
+        """6 imports from one module -- fires context finding, does NOT deny."""
+        code = "from mymodule import a, b, c, d, e, f"
+        result = evaluate_payload(self._make_payload(code))
+        _assert_not_denied(self, result)
+        rule_ids = {f.rule_id for f in result.findings}
+        self.assertIn("PY-IMPORT-001", rule_ids)
+
+    def test_family_prefix_detected(self):
+        """Shared parse_ prefix family elevates severity to MEDIUM."""
+        code = (
+            "from myparser import "
+            "parse_user, parse_order, parse_product, "
+            "parse_invoice, parse_shipment, parse_address"
+        )
+        result = evaluate_payload(self._make_payload(code))
+        _assert_not_denied(self, result)
+        fanout_findings = [f for f in result.findings if f.rule_id == "PY-IMPORT-001"]
+        self.assertTrue(len(fanout_findings) > 0)
+        from vibeforcer.models import Severity
+        self.assertEqual(fanout_findings[0].severity, Severity.MEDIUM)
+
+    def test_bare_import_not_flagged(self):
+        """import module (not from-import) is never flagged."""
+        code = "import os\nimport sys\nimport json\nimport re\nimport ast\nimport abc"
+        result = evaluate_payload(self._make_payload(code))
+        rule_ids = {f.rule_id for f in result.findings}
+        self.assertNotIn("PY-IMPORT-001", rule_ids)
+
+    def test_multiple_modules_each_under_threshold_ok(self):
+        """Many imports spread across multiple modules -- each under threshold."""
+        code = "\n".join([
+            "from mod_a import x, y, z",
+            "from mod_b import p, q, r",
+            "from mod_c import i, j, k",
+        ])
+        result = evaluate_payload(self._make_payload(code))
+        rule_ids = {f.rule_id for f in result.findings}
+        self.assertNotIn("PY-IMPORT-001", rule_ids)
+
+
 if __name__ == "__main__":
     unittest.main()

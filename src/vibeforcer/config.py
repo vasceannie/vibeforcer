@@ -236,6 +236,7 @@ def load_config(root: Path | None = None) -> RuntimeConfig:
         python_max_line_length=int(toml_thresholds.get("max_line_length", 120)),
         python_feature_envy_threshold=float(toml_thresholds.get("feature_envy_threshold", 0.60)),
         python_feature_envy_min_accesses=int(toml_thresholds.get("feature_envy_min_accesses", 6)),
+        python_import_fanout_limit=int(toml_thresholds.get("import_fanout_limit", 5)),
         skip_paths=skip_paths,
         skip_if_file_exists=skip_if_file_exists,
         disabled_rules=disabled_rules_list,
