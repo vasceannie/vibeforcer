@@ -505,8 +505,17 @@ def _init_git_worktree(tmp_path: Path) -> tuple[Path, Path]:
     return repo, worktree
 
 
-def test_sessionstart_injects_git_context(load_fixture):
-    result = evaluate_payload(load_fixture("sessionstart_startup.json"))
+def test_sessionstart_injects_git_context(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True, capture_output=True, text=True)
+    (repo / "f.txt").write_text("hi\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    payload = {"session_id": "s", "cwd": str(repo), "hook_event_name": "SessionStart"}
+    result = evaluate_payload(payload)
     assert result.output is not None
     spec = result.output["hookSpecificOutput"]
     assert spec["hookEventName"] == "SessionStart"
