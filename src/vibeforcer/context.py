@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from vibeforcer.config import load_config
-from vibeforcer.models import RuntimeConfig
+from vibeforcer.models import ContentTarget, RuntimeConfig
 from vibeforcer.trace import TraceWriter
 from vibeforcer.util.payloads import HookPayload
 
@@ -23,7 +25,7 @@ class HookContext:
         return self.payload.tool_name
 
     @property
-    def tool_input(self) -> dict:
+    def tool_input(self) -> dict[str, Any]:
         return self.payload.tool_input
 
     @property
@@ -35,15 +37,15 @@ class HookContext:
         return self.payload.user_prompt
 
     @property
-    def content_targets(self):
+    def content_targets(self) -> list[ContentTarget]:
         return self.payload.content_targets
 
     @property
-    def candidate_paths(self):
+    def candidate_paths(self) -> list[str]:
         return self.payload.candidate_paths
 
     @property
-    def cwd(self):
+    def cwd(self) -> Path:
         return self.payload.cwd
 
     @property
@@ -55,7 +57,7 @@ class HookContext:
         return self.payload.languages
 
 
-def build_context(payload_dict: dict) -> HookContext:
+def build_context(payload_dict: dict[str, Any]) -> HookContext:
     config = load_config()
     trace = TraceWriter(config.trace_dir)
     payload = HookPayload(payload_dict, config)

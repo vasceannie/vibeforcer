@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from vibeforcer.models import RuleFinding
+
+if TYPE_CHECKING:
+    from vibeforcer.context import HookContext
 
 
 class Rule(ABC):
@@ -18,7 +21,7 @@ class Rule(ABC):
         return not self.events or event_name in self.events
 
     @abstractmethod
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         raise NotImplementedError
 
 

@@ -1,4 +1,5 @@
 """Tests for import-only window exclusion in _collect_block_windows."""
+# pyright: reportPrivateUsage=false
 from __future__ import annotations
 
 import ast

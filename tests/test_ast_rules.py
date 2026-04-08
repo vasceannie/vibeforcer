@@ -1,33 +1,36 @@
 from __future__ import annotations
 
-import os
-import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from vibeforcer.engine import evaluate_payload
+from vibeforcer.models import EngineResult
 
 BUNDLE_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _assert_denied_by(test, result, rule_id, msg=""):
+def _assert_denied_by(
+    test: unittest.TestCase, result: EngineResult, rule_id: str, msg: str = "",
+) -> None:
     test.assertIsNotNone(result.output)
-    spec = result.output.get("hookSpecificOutput", {})
+    assert result.output is not None
+    spec: dict[str, Any] = result.output.get("hookSpecificOutput", {})
     decision = spec.get("permissionDecision")
     if decision is None:
-        inner = spec.get("decision", {})
+        inner: dict[str, Any] = spec.get("decision", {})
         decision = inner.get("behavior")
-        reason = inner.get("message", "")
+        reason: str = str(inner.get("message", ""))
     else:
-        reason = spec.get("permissionDecisionReason", "")
+        reason = str(spec.get("permissionDecisionReason", ""))
     test.assertEqual(decision, "deny")
     test.assertIn(rule_id, reason)
 
 
-def _assert_not_denied(test, result):
+def _assert_not_denied(test: unittest.TestCase, result: EngineResult) -> None:
     if result.output is None:
         return
-    spec = result.output.get("hookSpecificOutput", {})
+    spec: dict[str, Any] = result.output.get("hookSpecificOutput", {})
     decision = spec.get("permissionDecision")
     test.assertNotEqual(decision, "deny")
 
@@ -190,7 +193,7 @@ class TestDeadCode(unittest.TestCase):
 
 
 class TestImportFanout(unittest.TestCase):
-    def _make_payload(self, code: str) -> dict:
+    def _make_payload(self, code: str) -> dict[str, Any]:
         return {
             "hook_event_name": "PreToolUse",
             "tool_name": "Edit",

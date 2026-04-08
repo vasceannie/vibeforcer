@@ -9,7 +9,7 @@ from typing import Any
 try:
     import tomllib
 except ModuleNotFoundError:
-    import tomli as tomllib  # type: ignore[no-redef]
+    import tomli as tomllib  # type: ignore[no-redef]  # pyright: ignore[reportMissingImports]
 
 
 def _find_project_root(start: Path | None = None) -> Path:
@@ -144,27 +144,27 @@ def load_config(project_root: Path | None = None) -> QualityConfig:
     project_root = project_root.resolve()
     raw = _load_raw_config(project_root)
 
-    paths = raw.get("paths", {})
-    src_rel = paths.get("src", "src")
-    tests_rel = paths.get("tests", "tests")
+    paths: dict[str, Any] = raw.get("paths", {})
+    src_rel: str = paths.get("src", "src")
+    tests_rel: str = paths.get("tests", "tests")
     exclude_dirs = set(paths.get("exclude_dirs", [".venv", "__pycache__", "node_modules", ".git"]))
     exclude_patterns = set(paths.get("exclude_patterns", ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]))
 
-    thresholds = raw.get("thresholds", {})
-    magic = raw.get("magic_values", {})
-    wrappers_raw = raw.get("wrappers", {})
-    logging_raw = raw.get("logging", {})
-    deprecated_raw = raw.get("deprecated_patterns", {})
-    scope_raw = raw.get("scope", {})
-    type_safety_raw = raw.get("type_safety", {})
-    exception_safety_raw = raw.get("exception_safety", {})
-    test_smells_raw = raw.get("test_smells", {})
+    thresholds: dict[str, Any] = raw.get("thresholds", {})
+    magic: dict[str, Any] = raw.get("magic_values", {})
+    wrappers_raw: dict[str, Any] = raw.get("wrappers", {})
+    logging_raw: dict[str, Any] = raw.get("logging", {})
+    deprecated_raw: dict[str, Any] = raw.get("deprecated_patterns", {})
+    scope_raw: dict[str, Any] = raw.get("scope", {})
+    type_safety_raw: dict[str, Any] = raw.get("type_safety", {})
+    exception_safety_raw: dict[str, Any] = raw.get("exception_safety", {})
+    test_smells_raw: dict[str, Any] = raw.get("test_smells", {})
 
     allowed_nums: set[int | float] = set()
     for n in magic.get("allowed_numbers", [0, 1, 2, 3, -1, 10, 100, 1000]):
         allowed_nums.add(n)
 
-    allowed_strs = set(magic.get("allowed_strings", ["", " ", "\n", "\t", "utf-8"]))
+    allowed_strs: set[str] = set(magic.get("allowed_strings", ["", " ", "\n", "\t", "utf-8"]))
     allowed_wraps: set[tuple[str, str]] = {tuple(pair) for pair in wrappers_raw.get("allowed", [])}
 
     deprecated = [
