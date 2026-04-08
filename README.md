@@ -1,6 +1,6 @@
 # vibeforcer
 
-Global CLI guardrails engine for AI coding agents. One rule set, three platforms.
+Global CLI guardrails engine for AI coding agents. **Real-time hook enforcement + batch code quality linting.** One tool, three platforms.
 
 ## Install
 
@@ -26,6 +26,11 @@ vibeforcer test
 
 # Check stats
 vibeforcer stats --days 7
+
+# Lint a project for code quality
+vibeforcer lint check .           # scan for violations
+vibeforcer lint baseline .         # freeze current state
+vibeforcer lint init .             # scaffold quality_gate.toml
 ```
 
 ## Supported Platforms
@@ -67,6 +72,8 @@ No shell wrappers. No bootstrap scripts. Just `vibeforcer handle` on PATH.
 
 ## CLI
 
+### Hook Enforcement (real-time)
+
 ```bash
 # Core hook handler (called by platform hooks)
 vibeforcer handle [--platform claude|codex|opencode]
@@ -96,6 +103,36 @@ vibeforcer test
 vibeforcer version
 ```
 
+### Code Quality Linting (batch)
+
+```bash
+# Scan a project for violations (compares against baseline)
+vibeforcer lint check [path]
+
+# Generate/update baselines.json (freeze current violations)
+vibeforcer lint baseline [path]
+
+# Scaffold a quality_gate.toml config
+vibeforcer lint init [path]
+
+# Merge missing config keys into existing quality_gate.toml
+vibeforcer lint update [path] [--dry-run]
+```
+
+#### 28 Batch Detectors
+
+| Category | Detectors |
+|---|---|
+| **Code smells** | high-complexity, long-method, too-many-params, deep-nesting, god-class, oversized-module |
+| **Type safety** | banned-any (typing.Any), type-suppression (# type: ignore) |
+| **Exception safety** | broad-except-swallow, silent-except, silent-datetime-fallback |
+| **Test smells** | long-test, eager-test, assertion-free-test, assertion-roulette, conditional-assertion, fixture-outside-conftest |
+| **Duplication** | semantic-clone, repeated-magic-number, repeated-string-literal, repeated-code-block, duplicate-call-sequence |
+| **Logging** | direct-get-logger, wrong-logger-name |
+| **Stale code** | deprecated-pattern |
+| **Wrappers** | unnecessary-wrapper |
+| **Style** | long-line |
+
 ## Config Discovery
 
 vibeforcer resolves config in this order:
@@ -110,7 +147,7 @@ Per-repo overrides via `quality_gate.toml` in the repo root.
 
 ## Rules
 
-### Built-in Python Rules (30)
+### Real-time Hook Rules (30 Python + 39 regex)
 - Path protection (protected, sensitive, system)
 - Git safety (--no-verify, stash ban)
 - Python AST quality (long methods, deep nesting, complexity, dead code, god class, feature envy, thin wrappers)
@@ -119,6 +156,11 @@ Per-repo overrides via `quality_gate.toml` in the repo root.
 - Session controls (stop checks, config change guard)
 - LangGraph best practices (state reducers, mutation detection, deprecated API)
 - Baseline inflation guard
+
+### Batch Lint Rules (28 detectors)
+- See "28 Batch Detectors" table above
+- Configured via `quality_gate.toml` in each project
+- Baseline tracking: only *new* violations fail the gate
 
 ### Declarative Regex Rules (39)
 Configured in `config.json` — covers:
