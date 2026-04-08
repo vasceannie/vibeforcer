@@ -1,0 +1,9 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "set +e && rm -rf build/ 2>/dev/null || true"
+  }
+}

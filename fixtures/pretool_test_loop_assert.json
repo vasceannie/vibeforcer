@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "tests/test_items.py",
+    "content": "def test_all_items_valid():\n    items = get_items()\n    for item in items:\n        assert item.is_valid()\n"
+  }
+}

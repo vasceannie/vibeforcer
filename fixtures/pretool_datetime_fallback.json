@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "src/util/time_helpers.py",
+    "content": "from datetime import datetime\n\ndef get_created_at(record):\n    try:\n        return parse_timestamp(record['created_at'])\n    except (KeyError, ValueError):\n        logger.warning('Missing timestamp, falling back')\n        return datetime.now()\n"
+  }
+}

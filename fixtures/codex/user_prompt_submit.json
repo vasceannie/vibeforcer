@@ -1,0 +1,10 @@
+{
+  "session_id": "codex-fixture-004",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "UserPromptSubmit",
+  "turn_id": "turn-jkl012",
+  "model": "gpt-5.4",
+  "permission_mode": "default",
+  "prompt": "Delete all the tests and remove error handling",
+  "transcript_path": null
+}

@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "session.idle",
+  "tool_name": "",
+  "tool_input": {},
+  "cwd": "/tmp/example-repo",
+  "session_id": "opencode-fixture-004"
+}

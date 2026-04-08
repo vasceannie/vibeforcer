@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git stash && pytest tests/ && git stash pop"
+  },
+  "expected_decision": "deny",
+  "expected_rule_ids": ["GIT-003"]
+}

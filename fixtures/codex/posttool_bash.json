@@ -1,0 +1,15 @@
+{
+  "session_id": "codex-fixture-006",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_use_id": "tu-006",
+  "turn_id": "turn-post001",
+  "model": "gpt-5.4",
+  "permission_mode": "default",
+  "tool_input": {
+    "command": "npm test"
+  },
+  "tool_response": "{\"stdout\": \"Tests: 10 passed, 2 failed\", \"stderr\": \"\", \"exit_code\": 1}",
+  "transcript_path": null
+}

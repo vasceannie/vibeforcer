@@ -1,0 +1,9 @@
+{
+  "session_id": "codex-fixture-005",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "model": "gpt-5.4",
+  "permission_mode": "default",
+  "transcript_path": null
+}

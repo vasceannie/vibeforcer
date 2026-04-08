@@ -1,0 +1,7 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/home/trav/.claude/hooks/enforcer",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "model": "claude-sonnet-4-6"
+}

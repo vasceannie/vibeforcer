@@ -1,0 +1,9 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/home/trav/.claude/hooks/enforcer",
+  "hook_event_name": "ConfigChange",
+  "source": "policy_settings",
+  "changes": {
+    "model": "claude-opus-4-6"
+  }
+}

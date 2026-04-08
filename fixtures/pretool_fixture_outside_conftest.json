@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "tests/test_db.py",
+    "content": "import pytest\n\n@pytest.fixture\ndef db_session():\n    return create_session()\n\ndef test_query(db_session):\n    assert db_session.query(User).count() > 0\n"
+  }
+}

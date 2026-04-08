@@ -1,0 +1,11 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "src/example.py",
+    "offset": 10,
+    "limit": 20
+  }
+}

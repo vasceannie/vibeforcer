@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "src/components/Button.tsx",
+    "content": "const Button = () => <button style={{fontSize: \"14px\", color: \"#FF5733\"}}>Click</button>\n"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/home/trav/.claude/hooks/enforcer",
+  "hook_event_name": "ConfigChange",
+  "source": "project_settings",
+  "changes": {
+    "disableAllHooks": true
+  }
+}

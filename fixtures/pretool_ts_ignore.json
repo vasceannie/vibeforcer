@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "src/example.ts",
+    "content": "// @ts-ignore\nexport const value: any = thing as any;\n"
+  }
+}

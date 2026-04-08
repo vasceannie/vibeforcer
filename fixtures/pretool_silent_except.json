@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "src/utils/parser.py",
+    "content": "def safe_parse(raw_data):\n    try:\n        return json.loads(raw_data)\n    except Exception:\n        pass\n"
+  }
+}

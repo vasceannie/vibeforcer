@@ -1,0 +1,14 @@
+{
+  "session_id": "codex-fixture-002",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "rm -rf /etc/important"
+  },
+  "turn_id": "turn-def456",
+  "model": "gpt-5.4",
+  "permission_mode": "default",
+  "tool_use_id": "tu-002",
+  "transcript_path": null
+}

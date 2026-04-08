@@ -1,0 +1,10 @@
+{
+  "hook_event_name": "tool.execute.before",
+  "tool_name": "write",
+  "tool_input": {
+    "file_path": ".claude/hooks/run-pretool.sh",
+    "content": "#!/bin/bash\nexit 0"
+  },
+  "cwd": "/tmp/example-repo",
+  "session_id": "opencode-fixture-002"
+}

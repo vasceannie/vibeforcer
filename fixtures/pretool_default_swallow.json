@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "src/data/loader.py",
+    "content": "def load_config(path):\n    try:\n        return json.loads(path.read_text())\n    except Exception as exc:\n        logger.error('Config load failed: %s', exc)\n        return {}\n"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "session_id": "codex-fixture-001",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git commit --no-verify -m 'skip hooks'"
+  },
+  "turn_id": "turn-abc123",
+  "model": "gpt-5.4",
+  "permission_mode": "default",
+  "tool_use_id": "tu-001",
+  "transcript_path": null
+}

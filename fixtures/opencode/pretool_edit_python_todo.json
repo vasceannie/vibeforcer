@@ -1,0 +1,10 @@
+{
+  "hook_event_name": "tool.execute.before",
+  "tool_name": "edit",
+  "tool_input": {
+    "file_path": "src/main.py",
+    "new_string": "# TODO: implement this later\ndef placeholder():\n    pass"
+  },
+  "cwd": "/tmp/example-repo",
+  "session_id": "opencode-fixture-003"
+}

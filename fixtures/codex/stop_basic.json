@@ -1,0 +1,10 @@
+{
+  "session_id": "codex-fixture-003",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "Stop",
+  "turn_id": "turn-ghi789",
+  "model": "gpt-5.4",
+  "stop_hook_active": false,
+  "last_assistant_message": "I've completed the changes.",
+  "transcript_path": null
+}

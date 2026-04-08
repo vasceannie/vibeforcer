@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "tool.execute.before",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git commit --no-verify -m 'skip hooks'"
+  },
+  "cwd": "/tmp/example-repo",
+  "session_id": "opencode-fixture-001"
+}

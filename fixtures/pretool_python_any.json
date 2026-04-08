@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "src/example.py",
+    "content": "from typing import Any\n\ndef identity(value: Any) -> Any:\n    return value\n"
+  }
+}

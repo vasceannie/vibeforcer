@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "tests/test_user.py",
+    "content": "def test_create_user():\n    user = create_user('alice', 'alice@example.com')\n    assert user is not None\n    assert user.name == 'alice'\n    assert user.email == 'alice@example.com'\n    assert user.active\n"
+  }
+}

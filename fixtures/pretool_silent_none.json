@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "src/services/user.py",
+    "content": "def find_user(user_id):\n    try:\n        return db.query(User, user_id)\n    except DatabaseError as exc:\n        logger.error('User lookup failed: %s', exc)\n        return None\n"
+  }
+}

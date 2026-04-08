@@ -1,0 +1,6 @@
+{
+  "session_id": "fixture-session",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "Stop",
+  "stop_response": "I noticed the type error but it was pre-existing and not introduced by my changes."
+}

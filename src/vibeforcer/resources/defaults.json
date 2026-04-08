@@ -1,0 +1,1094 @@
+{
+  "trace_dir": "logs",
+  "prompt_context_files": [
+    "prompt_context/organization.md",
+    "prompt_context/repo.md"
+  ],
+  "search_reminder_message": "Remember you also have Grep, Read, Glob, prompt hooks, and agent hooks available. Prefer deterministic search before spawning a verifier agent.",
+  "protected_paths": [
+    ".claude/",
+    "Makefile",
+    "pyproject.toml",
+    "tsconfig.json",
+    "biome.json",
+    ".eslintrc*",
+    "eslint.config.*",
+    ".prettierrc*",
+    "prettier.config.*",
+    "tests/quality/",
+    "src/test/code-quality.test.ts"
+  ],
+  "sensitive_path_patterns": [
+    "/.env",
+    "/.env.local",
+    "/.env.production",
+    ".aws/credentials",
+    ".aws/config",
+    ".ssh/",
+    ".kube/config",
+    "/.npmrc",
+    "/.pypirc",
+    ".pem",
+    ".key",
+    "id_rsa",
+    "id_ed25519"
+  ],
+  "system_path_prefixes": [
+    "/etc/",
+    "/system/",
+    "/usr/bin/",
+    "/usr/sbin/",
+    "/bin/",
+    "/sbin/",
+    "/boot/",
+    "/lib/",
+    "/lib64/",
+    "/sys/",
+    "/proc/",
+    "/dev/",
+    "/root/",
+    "/private/etc/",
+    "/private/var/",
+    "c:\\windows\\",
+    "c:\\program files\\",
+    "c:\\programdata\\"
+  ],
+  "python_ast": {
+    "enabled": true,
+    "max_parse_chars": 200000,
+    "long_method_lines": 50,
+    "long_parameter_limit": 4
+  },
+  "post_edit_quality": {
+    "enabled": false,
+    "block_on_failure": true,
+    "commands_by_language": {
+      "python": [
+        "python -m pytest -q tests/quality"
+      ],
+      "js_ts": [
+        "npm run lint"
+      ],
+      "rust": [
+        "cargo clippy --quiet"
+      ]
+    }
+  },
+  "async_jobs": {
+    "enabled": false,
+    "commands_by_language": {
+      "python": [
+        "python -m pytest -q tests/quality"
+      ],
+      "js_ts": [
+        "npm run lint"
+      ],
+      "rust": [
+        "cargo clippy --quiet"
+      ]
+    }
+  },
+  "enabled_rules": {
+    "BUILTIN-INJECT-PROMPT": true,
+    "BUILTIN-ENFORCE-FULL-READ": false,
+    "BUILTIN-PROTECTED-PATHS": true,
+    "GLOBAL-BUILTIN-SENSITIVE-DATA": true,
+    "GLOBAL-BUILTIN-SYSTEM-PROTECTION": true,
+    "GIT-001": true,
+    "PY-CODE-008": true,
+    "PY-CODE-009": true,
+    "QUALITY-POST-001": true,
+    "PY-SHELL-001": true,
+    "PY-QUALITY-004": true,
+    "PY-QUALITY-005": true,
+    "PY-QUALITY-006": true,
+    "PY-TEST-001": true,
+    "PY-QUALITY-007": true,
+    "PY-QUALITY-008": true,
+    "PY-QUALITY-009": true,
+    "PY-QUALITY-010": true,
+    "PY-TEST-002": true,
+    "PY-TEST-003": true,
+    "PY-TEST-004": true,
+    "PY-LINTER-001": true,
+    "PY-LINTER-002": true,
+    "FE-LINTER-001": true,
+    "FE-LINTER-002": true,
+    "QA-PATH-001": true,
+    "QA-PATH-002": true,
+    "QA-PATH-003": true,
+    "QA-PATH-004": true,
+    "STYLE-005": true,
+    "TS-QUALITY-003": true,
+    "RS-QUALITY-003": true,
+    "SHELL-001": true,
+    "GIT-002": true,
+    "WARN-FILE-001": true,
+    "WARN-BASELINE-001": true,
+    "WARN-BASELINE-002": true,
+    "STOP-001": true,
+    "STOP-002": true,
+    "WARN-LARGE-001": true,
+    "GLOBAL-BUILTIN-HOOK-INFRA-EXEC": false,
+    "BUILTIN-RULEBOOK-SECURITY": true,
+    "SESSION-001": true,
+    "CONFIG-001": true,
+    "CONFIG-002": true,
+    "CONFIG-003": true,
+    "PY-CODE-010": true,
+    "PY-CODE-011": true,
+    "PY-CODE-012": true,
+    "PY-CODE-013": true,
+    "PY-CODE-014": true,
+    "PY-CODE-015": true,
+    "PY-CODE-016": true,
+    "PY-EXC-002": true,
+    "PY-CODE-017": true
+  },
+  "regex_rules": [
+    {
+      "rule_id": "PY-LOG-001",
+      "title": "Ban stdlib logger",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "import logging",
+        "from logging import",
+        "logging\\.getLogger"
+      ],
+      "action": "deny",
+      "message": "Stdlib logging is banned in Python sources. Use the project logger abstraction instead."
+    },
+    {
+      "rule_id": "PY-EXC-001",
+      "title": "Block broad exception handler",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "except\\s+Exception\\s*(?:as\\s+\\w+)?:\\s*\\n\\s+(?:logger\\.|logging\\.)"
+      ],
+      "action": "deny",
+      "message": "Broad `except Exception:` handlers that only log are blocked. Catch specific exceptions or re-raise with context.\n\nInstead of:\n    try:\n        result = fetch_data(url)\n    except Exception:\n        logger.error(\"fetch failed\")\n\nUse:\n    try:\n        result = fetch_data(url)\n    except (httpx.HTTPError, TimeoutError) as exc:\n        raise DataFetchError(f\"fetch failed for {{url}}\") from exc\n\nIf you genuinely need a broad catch at a boundary, re-raise or propagate: except Exception as exc: logger.exception(...); raise"
+    },
+    {
+      "rule_id": "PY-EXC-002",
+      "title": "Block silent exception swallow",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "except\\s+(Exception|BaseException)\\s*(?:as\\s+\\w+)?:\\s*\\n\\s+pass\\s*$",
+        "except\\s*:\\s*\\n\\s+pass\\s*$",
+        "except\\s+(Exception|BaseException)\\s*(?:as\\s+\\w+)?:\\s*\\n\\s+continue\\s*$",
+        "except\\s+(Exception|BaseException)\\s*(?:as\\s+\\w+)?:\\s*\\n\\s+return\\s+None\\s*$",
+        "except\\s+(Exception|BaseException)\\s*(?:as\\s+\\w+)?:\\s*\\n\\s+return\\s*$"
+      ],
+      "action": "deny",
+      "message": "Silent `except Exception: pass/continue/return None` is blocked. These handlers swallow errors completely, making failures invisible.\n\nInstead of:\n    try:\n        result = process(data)\n    except Exception:\n        pass\n\nEither catch specific exceptions:\n    try:\n        result = process(data)\n    except (ValueError, KeyError) as exc:\n        logger.warning(\"process failed: %s\", exc)\n\nOr re-raise with context:\n    except Exception as exc:\n        raise ProcessingError(\"data processing failed\") from exc\n\nIf the failure is truly expected and safe to ignore, catch the specific exception type."
+    },
+    {
+      "rule_id": "PY-TYPE-001",
+      "title": "Ban Python Any",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "(?m)^\\s*from\\s+typing\\s+import\\s+[^#\\n]*\\bAny\\b",
+        "\\btyping\\.Any\\b",
+        ":\\s*Any\\b",
+        "->\\s*Any\\b",
+        "\\[\\s*Any\\s*\\]"
+      ],
+      "action": "deny",
+      "message": "Python `Any` is blocked. Use a concrete type, Protocol, TypedDict, TypeVar, or a narrow union.\n\nInstead of:\n    def process(data: Any) -> Any:\n\nUse:\n    def process(data: Mapping[str, str]) -> ProcessResult:\n\nFor generic containers: list[str], dict[str, int], Sequence[T]\nFor optional: str | None (not Optional[Any])\nFor callbacks: Callable[[int, str], bool]\nFor duck typing: define a Protocol with the methods you actually need."
+    },
+    {
+      "rule_id": "PY-TYPE-002",
+      "title": "Ban Python type suppressions",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "(?i)#\\s*type:\\s*ignore(\\[[^\\]]+\\])?\\b",
+        "(?i)#\\s*pyright:\\s*ignore(\\[[^\\]]+\\])?\\b",
+        "(?i)#\\s*pyre-ignore\\b",
+        "(?i)#\\s*noqa\\b",
+        "(?i)#\\s*ruff:\\s*noqa\\b",
+        "(?i)#\\s*pylint:\\s*disable\\s*="
+      ],
+      "action": "deny",
+      "message": "Python type or lint suppression comments (# type: ignore, # noqa, # pylint: disable, # pyright: ignore) are blocked. Fix the underlying typing or lint issue instead.\n\nCommon fixes:\n- `# type: ignore[arg-type]` \u2192 fix the argument type or add an overload\n- `# type: ignore[return-value]` \u2192 narrow the return type or add a TypeGuard\n- `# type: ignore[assignment]` \u2192 use a Union type or restructure\n- `# noqa: E501` \u2192 break the line or extract a variable\n- If the library has bad stubs, add a local .pyi stub or use a Protocol."
+    },
+    {
+      "rule_id": "TS-LINT-001",
+      "title": "Block shell insertion of ignore directives",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "command",
+      "patterns": [
+        "(biome-ignore|@ts-ignore|@ts-expect-error|@ts-nocheck|eslint-disable).*\\.(js|jsx|ts|tsx|mjs|cjs)"
+      ],
+      "action": "deny",
+      "message": "Bash commands that insert JS/TS lint or type suppressions are blocked."
+    },
+    {
+      "rule_id": "TS-LINT-002",
+      "title": "Block TS/JS ignore directives",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.ts",
+        "**/*.tsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ],
+      "patterns": [
+        "//\\s*biome-ignore",
+        "//\\s*@ts-ignore",
+        "//\\s*@ts-expect-error",
+        "//\\s*@ts-nocheck",
+        "//\\s*eslint-disable",
+        "/\\*\\s*eslint-disable"
+      ],
+      "action": "deny",
+      "message": "JS/TS lint or type suppression comments are blocked. Fix the root cause instead."
+    },
+    {
+      "rule_id": "TS-TYPE-001",
+      "title": "Block TS any",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.ts",
+        "**/*.tsx"
+      ],
+      "patterns": [
+        ":\\s*any\\b"
+      ],
+      "action": "deny",
+      "message": "TypeScript `any` is blocked. Use a specific type or generic."
+    },
+    {
+      "rule_id": "TS-TYPE-002",
+      "title": "Block unsafe TS assertions",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.ts",
+        "**/*.tsx"
+      ],
+      "patterns": [
+        "\\bas\\s+(any|unknown|never)\\b"
+      ],
+      "action": "deny",
+      "message": "Unsafe TypeScript assertions (`as any|unknown|never`) are blocked."
+    },
+    {
+      "rule_id": "STYLE-004",
+      "title": "Block complex inline styles",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.tsx",
+        "**/*.jsx"
+      ],
+      "patterns": [
+        "style=\\{\\{[^}]{30,}\\}\\}"
+      ],
+      "action": "deny",
+      "message": "Complex inline styles are blocked. Move them into tokens, classes, or shared style primitives."
+    },
+    {
+      "rule_id": "RS-QUALITY-001",
+      "title": "Block Rust TODO markers",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.rs"
+      ],
+      "patterns": [
+        "(?i)//\\s*(TODO|FIXME|XXX|HACK):?"
+      ],
+      "action": "deny",
+      "message": "Rust TODO/FIXME/XXX/HACK markers are blocked. Track follow-up work outside the source file."
+    },
+    {
+      "rule_id": "RS-QUALITY-002",
+      "title": "Block Rust unwrap",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.rs"
+      ],
+      "patterns": [
+        "\\.unwrap\\s*\\(\\)"
+      ],
+      "action": "deny",
+      "message": "Rust `unwrap()` is blocked. Use `?`, `expect` with context, or explicit error handling."
+    },
+    {
+      "rule_id": "REMIND-SEARCH-001",
+      "title": "Search reminder",
+      "severity": "LOW",
+      "events": [
+        "PreToolUse"
+      ],
+      "target": "command",
+      "patterns": [
+        "(^|\\s)grep(\\s|$)"
+      ],
+      "action": "context",
+      "additional_context": "Remember you also have Grep, Read, Glob, prompt hooks, and agent hooks available. Prefer deterministic search before spawning a verifier agent."
+    },
+    {
+      "rule_id": "PY-SHELL-001",
+      "title": "Block Python source shell edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "command",
+      "patterns": [
+        "(sed\\s+-i|tee\\s|>\\s*(?!&)|>>)\\s*.*src/.*\\.py"
+      ],
+      "action": "deny",
+      "message": "Shell edits to Python source files under src/ are blocked. Use the Edit or Write tool so size and quality guards apply."
+    },
+    {
+      "rule_id": "PY-QUALITY-004",
+      "title": "Block datetime.now fallback",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "except[^:]*:.*?return\\s+datetime\\.(now|utcnow)\\s*\\("
+      ],
+      "action": "deny",
+      "message": "Returning `datetime.now()` as an exception fallback is blocked. Propagate the error or use a sentinel that callers can distinguish from real timestamps.\n\nInstead of:\n    try:\n        ts = parse_timestamp(raw)\n    except ValueError:\n        ts = datetime.now()  # caller can't tell this is fake\n\nUse a sentinel:\n    UNKNOWN_TIME = datetime(1970, 1, 1, tzinfo=UTC)\n    try:\n        ts = parse_timestamp(raw)\n    except ValueError:\n        ts = UNKNOWN_TIME\n\nOr propagate: let the caller decide what to do with the error.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-QUALITY-005",
+      "title": "Block default value swallow",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "except[^:]*:.*?(logger\\.|logging\\.).*?return\\s+(\\{\\}|\\[\\]|set\\(\\)|\\\"\\\"|'' |0|False)\\s*$"
+      ],
+      "action": "deny",
+      "message": "Exception handlers that log and return empty defaults ([], {{}}, \"\", 0) are blocked. Re-raise with context or use a sentinel callers can check.\n\nInstead of:\n    try:\n        items = load_items(path)\n    except Exception:\n        logger.error(\"load failed\")\n        return []  # caller proceeds with empty data, silently wrong\n\nUse:\n    try:\n        items = load_items(path)\n    except FileNotFoundError:\n        return []  # empty is correct when file doesn't exist\n    except (json.JSONDecodeError, PermissionError) as exc:\n        raise LoadError(f\"corrupt or inaccessible: {path}\") from exc",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-QUALITY-006",
+      "title": "Block silent None return",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "except[^:]*:.*?(logger\\.|logging\\.).*?return\\s+None\\b"
+      ],
+      "action": "deny",
+      "message": "Exception handlers that log and return None are blocked. Propagate or re-raise the error so callers don't silently swallow failures.\n\nInstead of:\n    try:\n        user = get_user(user_id)\n    except Exception:\n        logger.error(\"user lookup failed\")\n        return None  # caller gets AttributeError later\n\nUse:\n    try:\n        user = get_user(user_id)\n    except UserNotFoundError:\n        return None  # None is semantically correct here\n    except DatabaseError as exc:\n        raise  # let the caller handle infrastructure failures",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-TEST-001",
+      "title": "Block assertion roulette",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/test_*.py",
+        "**/tests/**/*.py",
+        "**/*_test.py"
+      ],
+      "patterns": [
+        "(^\\s*assert\\s+[^,\\n]+\\n){3,}"
+      ],
+      "action": "deny",
+      "message": "Three or more consecutive bare assert statements without messages are blocked. Add descriptive failure messages so failures are self-documenting.\n\nInstead of:\n    assert result.status == 200\n    assert result.body is not None\n    assert \"email\" in result.body\n\nUse:\n    assert result.status == 200, f\"Expected 200, got {{result.status}}\"\n    assert result.body is not None, \"Response body should not be None\"\n    assert \"email\" in result.body, f\"Missing email in {{result.body.keys()}}\"\n\nDescriptive messages turn a bare `AssertionError` into instant debugging context.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-QUALITY-007",
+      "title": "Block Python TODO/FIXME markers",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "(?i)#\\s*(TODO|FIXME|HACK|XXX)\\b"
+      ],
+      "action": "deny",
+      "message": "Python TODO/FIXME/HACK/XXX markers are blocked. Don't leave work-tracking comments in source code.\n\nInstead of:\n    # TODO: add retry logic\n    # FIXME: this breaks with unicode\n\nDo one of:\n\u2022 Fix it now (preferred)\n\u2022 Open a GitHub issue and reference it: # See #1234\n\u2022 Add it to CLAUDE.md or a project TODO file\n\nIf you're actively working on the code, just implement the fix instead of leaving a marker for future-you.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-QUALITY-008",
+      "title": "Block commented-out code",
+      "severity": "MEDIUM",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "patterns": [
+        "(^\\s*#\\s*(def |class |import |from |if |for |while |return |raise |try:|except|with ).*\\n){2,}"
+      ],
+      "action": "deny",
+      "message": "Blocks of commented-out code are blocked. Remove dead code instead of commenting it out.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-QUALITY-009",
+      "title": "Block hardcoded file paths",
+      "severity": "MEDIUM",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "exclude_path_globs": [
+        "**/test_*.py",
+        "**/tests/**/*.py",
+        "**/*_test.py",
+        "**/conftest.py"
+      ],
+      "patterns": [
+        "(?<![\\w/])(/home/\\w+|/Users/\\w+|/tmp/[a-zA-Z]\\w{2,}|C:\\\\\\\\Users\\\\\\\\)"
+      ],
+      "action": "deny",
+      "message": "Hardcoded file paths are blocked. Use environment variables, config, or pathlib for portable path resolution.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-QUALITY-010",
+      "title": "Block Python magic numbers",
+      "severity": "MEDIUM",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.py",
+        "**/*.pyi"
+      ],
+      "exclude_path_globs": [
+        "**/test_*.py",
+        "**/tests/**/*.py",
+        "**/*_test.py",
+        "**/conftest.py",
+        "**/constants*.py",
+        "**/config*.py",
+        "**/settings*.py"
+      ],
+      "patterns": [
+        "(?m)^(?!\\s*(#|\\w+\\s*=)).*[=<>!+\\-*/]\\s*(?<!\\.)\\b(\\d{4,}|[2-9]\\d{2,})\\b(?!\\.\\d|\\s*[\\]\\)},])"
+      ],
+      "action": "deny",
+      "message": "Magic numbers (large literals) are blocked outside constants/config modules. Define named constants instead.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-TEST-002",
+      "title": "Block Python test smells",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/test_*.py",
+        "**/tests/**/*.py",
+        "**/*_test.py"
+      ],
+      "patterns": [
+        "time\\.sleep\\s*\\(",
+        "(?m)^\\s*try:.*?except.*?:\\s*$",
+        "pytest\\.mark\\.skip\\s*\\(\\s*\\)",
+        "self\\.assert(Equal|True|False|Is|In|Raises)\\s*\\("
+      ],
+      "action": "deny",
+      "message": "Test smells detected. Fix the specific issue:\n\n\u2022 time.sleep() \u2192 use async wait, polling with timeout, or freeze time:\n    await asyncio.wait_for(condition(), timeout=5.0)\n\n\u2022 try/except in test \u2192 use pytest.raises() as a context manager:\n    with pytest.raises(ValueError, match=\"invalid email\"):\n        validate(bad_input)\n\n\u2022 pytest.mark.skip() without reason \u2192 always provide a reason:\n    @pytest.mark.skip(reason=\"Requires live API credentials\")\n\n\u2022 unittest-style asserts (assertEqual, assertTrue) \u2192 use plain assert:\n    assert actual == expected, f\"Got {{actual}}\"",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-TEST-003",
+      "title": "Block test loops/conditionals with asserts",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/test_*.py",
+        "**/tests/**/*.py",
+        "**/*_test.py"
+      ],
+      "patterns": [
+        "(?m)^\\s*(for|while)\\s+.*:.*\\n\\s+assert\\s+",
+        "(?m)^\\s*(for|while)\\s+.*:.*\\n(\\s+.*\\n)*?\\s+assert\\s+.+\\n(\\s+.*\\n)*?\\s+assert\\s+"
+      ],
+      "action": "deny",
+      "message": "Loops containing assert statements are blocked in tests. Use @pytest.mark.parametrize for data-driven tests instead.\n\nInstead of:\n    for x in [1, 2, 3]:\n        result = func(x)\n        assert result > 0\n\nUse:\n    @pytest.mark.parametrize(\"x\", [1, 2, 3])\n    def test_func(x):\n        result = func(x)\n        assert result > 0\n\nFor complex iteration with setup, extract a helper and parametrize the inputs.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-TEST-004",
+      "title": "Block fixtures outside conftest",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/test_*.py",
+        "**/tests/**/test_*.py",
+        "**/*_test.py"
+      ],
+      "exclude_path_globs": [
+        "**/conftest.py"
+      ],
+      "patterns": [
+        "@pytest\\.fixture"
+      ],
+      "action": "deny",
+      "message": "Global pytest fixtures must be defined in conftest.py, not individual test files.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "PY-LINTER-001",
+      "title": "Block Python linter config edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "path",
+      "patterns": [
+        "(^|/)(\\.flake8|\\.pylintrc|pyrightconfig\\.json|mypy\\.ini|\\.mypy\\.ini|ruff\\.toml|\\.ruff\\.toml|setup\\.cfg)$"
+      ],
+      "action": "deny",
+      "message": "Edits to Python linter configuration files are blocked. Modify configuration only with explicit approval.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "PY-LINTER-002",
+      "title": "Block Python linter config shell edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "command",
+      "patterns": [
+        "(sed\\s+-i|tee\\s|>\\s*(?!&)|>>).*(\\.flake8|\\.pylintrc|pyrightconfig|mypy\\.ini|ruff\\.toml|setup\\.cfg)"
+      ],
+      "action": "deny",
+      "message": "Shell edits to Python linter config files are blocked.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "FE-LINTER-001",
+      "title": "Block frontend linter config edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "path",
+      "patterns": [
+        "(^|/)(\\.eslintrc.*|eslint\\.config\\..*|\\.prettierrc.*|prettier\\.config\\..*|biome\\.json|biome\\.jsonc|tsconfig.*\\.json)$"
+      ],
+      "action": "deny",
+      "message": "Edits to frontend linter/formatter configuration files are blocked. Modify with explicit approval.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "FE-LINTER-002",
+      "title": "Block frontend linter config shell edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "command",
+      "patterns": [
+        "(sed\\s+-i|tee\\s|>\\s*(?!&)|>>).*(eslintrc|eslint\\.config|prettierrc|prettier\\.config|biome\\.json|tsconfig)"
+      ],
+      "action": "deny",
+      "message": "Shell edits to frontend linter/formatter config files are blocked.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "QA-PATH-001",
+      "title": "Block code-quality test edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "path",
+      "patterns": [
+        "src/test/code-quality\\.test\\.ts$"
+      ],
+      "action": "deny",
+      "message": "Direct edits to src/test/code-quality.test.ts are blocked.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "QA-PATH-002",
+      "title": "Block code-quality test bash edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "command",
+      "patterns": [
+        "(sed\\s+-i|tee\\s|>\\s*(?!&)|>>).*src/test/code-quality\\.test\\.ts"
+      ],
+      "action": "deny",
+      "message": "Shell edits to src/test/code-quality.test.ts are blocked.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "QA-PATH-003",
+      "title": "Block tests/quality edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "path",
+      "patterns": [
+        "tests/quality/(?!baselines\\.json$)"
+      ],
+      "action": "deny",
+      "message": "Edits to tests/quality/ (except baselines.json) are blocked.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "QA-PATH-004",
+      "title": "Block tests/quality bash edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "command",
+      "patterns": [
+        "(sed\\s+-i|tee\\s|>\\s*(?!&)|>>).*tests/quality/"
+      ],
+      "action": "deny",
+      "message": "Shell edits to tests/quality/ are blocked.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "STYLE-005",
+      "title": "Block hardcoded design values",
+      "severity": "MEDIUM",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.tsx",
+        "**/*.jsx",
+        "**/*.css",
+        "**/*.scss"
+      ],
+      "exclude_path_globs": [
+        "**/tokens.*",
+        "**/theme.*",
+        "**/design-tokens.*",
+        "**/variables.*"
+      ],
+      "patterns": [
+        "font-size:\\s*\\d+px",
+        "font-weight:\\s*\\d{3}",
+        "#[0-9a-fA-F]{6}(?!.*(?:token|theme|color))"
+      ],
+      "action": "deny",
+      "message": "Hardcoded typography (font-size, font-weight) and color hex values are blocked outside design token files. Use design tokens or theme variables.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "TS-QUALITY-003",
+      "title": "Block TS TODO markers",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.ts",
+        "**/*.tsx",
+        "**/*.js",
+        "**/*.jsx"
+      ],
+      "patterns": [
+        "(?i)//\\s*(TODO|FIXME|HACK|XXX)\\b"
+      ],
+      "action": "deny",
+      "message": "JS/TS TODO/FIXME/HACK/XXX markers are blocked. Track follow-up work in issues.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "RS-QUALITY-003",
+      "title": "Block Rust magic numbers",
+      "severity": "MEDIUM",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "content",
+      "path_globs": [
+        "**/*.rs"
+      ],
+      "exclude_path_globs": [
+        "**/constants.*",
+        "**/config.*"
+      ],
+      "patterns": [
+        "(?m)^(?!\\s*(//|const|static|let\\s+\\w+\\s*:\\s*)).*[=<>!+\\-*/]\\s*\\b(\\d{4,}|[2-9]\\d{2,})\\b"
+      ],
+      "action": "deny",
+      "message": "Rust magic numbers are blocked outside constants modules. Define named constants.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "SHELL-001",
+      "title": "Block shell quality bypasses",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "command",
+      "patterns": [
+        "\\bset\\s+\\+e\\b",
+        "2>\\s*/dev/null(?!\\s*\\|)",
+        "\\|\\|\\s*true\\s*$",
+        "\\|\\|\\s*:\\s*$"
+      ],
+      "action": "deny",
+      "message": "Shell quality bypasses are blocked. Handle errors explicitly instead.\n\n\u2022 `set +e` \u2192 Keep `set -e` and handle expected failures with `if` or `||`:\n    if ! command_that_might_fail; then\n        echo \"Failed, handling gracefully\"\n    fi\n\n\u2022 `2>/dev/null` \u2192 Check the exit code and handle the error:\n    if output=$(command 2>&1); then\n        echo \"$output\"\n    else\n        echo \"command failed: $output\" >&2; exit 1\n    fi\n\n\u2022 `|| true` / `|| :` \u2192 Use `|| {{ handle_error; }}` or document why failure is acceptable.",
+      "case_sensitive": false,
+      "multiline": true
+    },
+    {
+      "rule_id": "GIT-002",
+      "title": "Git pre-check reminder",
+      "severity": "LOW",
+      "events": [
+        "PreToolUse"
+      ],
+      "target": "command",
+      "patterns": [
+        "\\bgit\\s+(commit|push|merge)\\b"
+      ],
+      "action": "context",
+      "additional_context": "Before committing: verify all tests pass, linters are clean, and no quality regressions are introduced. Run the project quality gate if one exists.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "WARN-BASELINE-001",
+      "title": "Warn on baselines edit",
+      "severity": "MEDIUM",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "path",
+      "patterns": [
+        "baselines?\\.json$",
+        "baselines?/"
+      ],
+      "action": "context",
+      "additional_context": "WARNING: You are editing baseline/snapshot files. Verify that changes reflect intentional behavior updates, not regressions. Review diffs carefully.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "WARN-BASELINE-002",
+      "title": "Warn on baselines bash edit",
+      "severity": "MEDIUM",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "command",
+      "patterns": [
+        "(sed\\s+-i|tee\\s|>\\s*(?!&)|>>).*baselines?\\.json"
+      ],
+      "action": "context",
+      "additional_context": "WARNING: You are editing baseline files via shell. Verify changes reflect intentional behavior updates.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "CONFIG-002",
+      "title": "Block enforcer config edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "path",
+      "patterns": [
+        "hook-layer/config\\.json"
+      ],
+      "action": "deny",
+      "message": "Enforcer configuration is read-only. Config edits require human approval outside the agent session."
+    },
+    {
+      "rule_id": "CONFIG-003",
+      "title": "Block enforcer config shell edits",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse",
+        "PermissionRequest"
+      ],
+      "target": "command",
+      "patterns": [
+        "(sed\\s+-i|tee\\s|>\\s*(?!&)|>>|cp\\s|mv\\s).*hook-layer/config\\.json"
+      ],
+      "action": "deny",
+      "message": "Shell edits to enforcer configuration are blocked. Config changes require human approval.",
+      "case_sensitive": false
+    },
+    {
+      "rule_id": "GIT-003",
+      "title": "git stash is banned",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse"
+      ],
+      "target": "command",
+      "patterns": [
+        "\\bgit\\s+stash\\b"
+      ],
+      "action": "deny",
+      "message": "git stash is banned. Do not use git stash to prove failures are pre-existing or to temporarily revert changes. If a test fails, fix it or document it.",
+      "case_sensitive": false,
+      "multiline": false
+    },
+    {
+      "rule_id": "PY-QUALITY-011",
+      "title": "Block underscore-prefixed sibling file pattern",
+      "severity": "HIGH",
+      "events": [
+        "PreToolUse"
+      ],
+      "tool_matchers": [
+        "Write",
+        "CreateFile"
+      ],
+      "target": "path",
+      "patterns": [
+        "(?:^|/)_[a-z]+_[a-z_]+\\.py$"
+      ],
+      "action": "deny",
+      "message": "Creating a `_prefix_*.py` sibling file is blocked. When splitting a module, create a sub-package (directory with `__init__.py`) instead.\n\nInstead of:\n    agents/_executor_fill.py\n    agents/_executor_routing.py\n    agents/_executor_types.py\n\nUse:\n    agents/executor/__init__.py   (re-exports public API)\n    agents/executor/fill.py\n    agents/executor/routing.py\n    agents/executor/types.py\n\nThe __init__.py should re-export so external imports stay the same."
+    },
+    {
+      "rule_id": "CONFIG-004",
+      "title": "Protect test integrity baseline and checker",
+      "severity": "CRITICAL",
+      "events": [
+        "PreToolUse"
+      ],
+      "tool_matchers": [
+        "Write",
+        "CreateFile",
+        "Edit"
+      ],
+      "target": "path",
+      "patterns": [
+        "test-integrity-baseline\\.json",
+        "test-integrity-check\\.py"
+      ],
+      "action": "deny",
+      "message": "Test integrity infrastructure is protected. The baseline and validation script cannot be modified by agents. Re-baseline requires human approval outside the agent session."
+    },
+    {
+      "rule_id": "CONFIG-005",
+      "title": "Protect test integrity files from shell edits",
+      "severity": "CRITICAL",
+      "events": [
+        "PreToolUse"
+      ],
+      "tool_matchers": [
+        "Bash",
+        "Terminal"
+      ],
+      "target": "command",
+      "patterns": [
+        "(?:sed|tee|mv|cp|>|>>).*test-integrity-(?:baseline|check)"
+      ],
+      "action": "deny",
+      "message": "Test integrity infrastructure is protected from shell modification. The baseline and validation script cannot be modified by agents."
+    },
+    {
+      "rule_id": "REMIND-PYTEST-MP",
+      "title": "Remind to use pytest multiprocessing",
+      "severity": "LOW",
+      "events": [
+        "PreToolUse"
+      ],
+      "target": "command",
+      "action": "context",
+      "additional_context": "\u26a1 Use pytest-xdist for parallel test execution. Add `-n auto` to let xdist pick the optimal worker count:\n\n  pytest tests/ -n auto -v --tb=short\n\nThis can cut test suite time by 2-8x on multi-core machines. Only skip -n when you need serial execution (e.g., tests with shared state, --pdb, or coverage collection).",
+      "tool_matchers": [
+        "Bash"
+      ],
+      "patterns": [
+        "(?:^|&&|;|\\|)\\s*(?:python3?\\s+-m\\s+)?pytest\\b(?!.*\\s-n[\\s=])"
+      ],
+      "case_sensitive": false,
+      "multiline": false
+    }
+  ],
+  "skip_paths": [],
+  "skip_if_file_exists": [
+    ".noqualitygate",
+    ".no-quality-gate"
+  ]
+}
