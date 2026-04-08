@@ -321,35 +321,12 @@ def _lint_check(root: Path) -> int:
     for rule_name, violations in collectors:
         if not violations:
             continue
-        allowed = baseline.get(rule_name, set())
-        current_ids = {v.stable_id for v in violations}
-        new_ids = current_ids - allowed
-        fixed_ids = allowed - current_ids
-        new_violations = [v for v in violations if v.stable_id in new_ids]
-
-        total_violations += len(violations)
-        total_new += len(new_violations)
-        total_fixed += len(fixed_ids)
-
-        if new_violations:
-            status = _c("31", f"\u2717 {rule_name}")
-        else:
-            status = _c("32", f"\u2713 {rule_name}")
-
-        counts = f"{len(violations)} total"
-        if new_violations:
-            counts += f", {_c('31', f'{len(new_violations)} NEW')}"
-        if fixed_ids:
-            counts += f", {_c('32', f'{len(fixed_ids)} fixed')}"
-        if allowed:
-            counts += f" {_c('2', f'(baseline: {len(allowed)})')}"
-
-        print(f"  {status}  {counts}")
-
-        for v in new_violations[:5]:
-            print(f"    {_c('31', '+')} {v}")
-        if len(new_violations) > 5:
-            print(f"    {_c('2', f'... and {len(new_violations) - 5} more')}")
+        totals = _tally_rule(
+            rule_name, violations, baseline, _c,
+        )
+        total_violations += totals[0]
+        total_new += totals[1]
+        total_fixed += totals[2]
 
     print()
     if total_new == 0:
@@ -641,6 +618,10 @@ def build_parser() -> argparse.ArgumentParser:
     lint_parser.add_argument("path", nargs="?", default=".", help="Project root (default: .)")
     lint_parser.set_defaults(func=cmd_lint, lint_command="check")
 
+    # -- search (isx integration) --
+    from vibeforcer.search.cli import build_search_parser, cmd_search as _cmd_search
+    build_search_parser(subparsers)
+
     # -- version --
     version = subparsers.add_parser("version", help="Print version")
     version.set_defaults(func=cmd_version)
@@ -648,7 +629,71 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# ---------------------------------------------------------------------------
+# isx compat & search dispatch
+# ---------------------------------------------------------------------------
+
+
+def _run_search_func(args: argparse.Namespace) -> int:
+    """Execute a search subcommand handler with IsxError handling."""
+    from vibeforcer.search.config import IsxError
+
+    try:
+        return int(args.func(args) or 0)
+    except IsxError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+def _dispatch_search(args: argparse.Namespace) -> int:
+    """Route ``vibeforcer search`` to the right handler."""
+    search_cmd = getattr(args, "search_command", None)
+    if search_cmd and hasattr(args, "func"):
+        return _run_search_func(args)
+
+    query_args = getattr(args, "query_args", None)
+    if query_args:
+        from vibeforcer.search.cli import cmd_search
+        args.query = query_args
+        args.func = cmd_search
+        return _run_search_func(args)
+
+    return 0
+
+
+def _isx_main(argv: list[str] | None = None) -> int:
+    """Entry point when invoked as ``isx``."""
+    from vibeforcer.search.cli import build_search_parser
+
+    parser = build_search_parser(subparsers=None)
+    args = parser.parse_args(argv)
+
+    search_cmd = getattr(args, "search_command", None)
+    if search_cmd and hasattr(args, "func"):
+        return _run_search_func(args)
+
+    query_args = getattr(args, "query_args", None)
+    if query_args:
+        from vibeforcer.search.cli import cmd_search
+        args.query = query_args
+        args.func = cmd_search
+        return _run_search_func(args)
+
+    parser.print_help()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    import os
+
+    # Detect invocation name for isx compatibility
+    prog_name = os.path.basename(sys.argv[0]) if sys.argv else "vibeforcer"
+    is_isx = prog_name in ("isx",)
+
+    if is_isx:
+        # When invoked as `isx`, route directly to search subcommands
+        return _isx_main(argv)
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -658,6 +703,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 0
+
+    if args.command == "search":
+        return _dispatch_search(args)
 
     if not hasattr(args, "func"):
         # Subcommand group without sub-subcommand (e.g. `vibeforcer config`)

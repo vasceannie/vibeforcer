@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vibeforcer"
-version = "1.0.0"
+version = "1.1.0"
 description = "Global CLI guardrails engine for AI coding agents — Claude Code, Codex, OpenCode"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -25,6 +25,8 @@ classifiers = [
 
 [project.scripts]
 vibeforcer = "vibeforcer.cli:safe_main"
+vfc = "vibeforcer.cli:safe_main"
+isx = "vibeforcer.cli:safe_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
