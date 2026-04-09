@@ -16,13 +16,12 @@ def _is_rule_enabled(ctx: "HookContext", rule_id: str, default: bool = True) -> 
     return default if value is None else bool(value)
 
 
-def _severity(name: str) -> Severity:
-    return Severity.from_value(name)
-
 
 def _command_has_word(command: str, word: str) -> bool:
-    import re
-    return bool(re.search(rf"(^|\s){re.escape(word)}(\s|$)", command, re.IGNORECASE))
+    """Check if *word* appears as a standalone token in *command*."""
+    escaped = re.escape(word)
+    pattern = rf"(^|\s){escaped}(\s|$)"
+    return bool(re.search(pattern, command, re.IGNORECASE))
 
 
 def _is_safe_read_shell(command: str) -> bool:
@@ -65,11 +64,31 @@ class PromptContextRule(Rule):
             RuleFinding(
                 rule_id=self.rule_id,
                 title=self.title,
-                severity=_severity("LOW"),
+                severity=Severity.LOW,
                 additional_context="\n\n".join(fragments),
                 metadata={"source_files": ctx.config.prompt_context_files},
             )
         ]
+
+
+def _find_read_target(
+    paths: list[str],
+    exempt: tuple[str, ...],
+) -> str | None:
+    """Return the candidate read path, or None if exempt."""
+    target = None
+    for path_value in paths:
+        if any(path_value.lower().endswith(s) for s in exempt):
+            return None
+        target = path_value
+    return target
+
+
+def _is_large_file(path_str: str, threshold: int) -> bool:
+    try:
+        return Path(path_str).stat().st_size > threshold
+    except OSError:
+        return False
 
 
 class FullFileReadRule(Rule):
@@ -78,7 +97,6 @@ class FullFileReadRule(Rule):
     events = ("PreToolUse", "PermissionRequest")
 
     EXEMPT_SUFFIXES = (".md", ".json", ".yaml", ".yml", ".txt", ".log", ".csv")
-    # ~10k tokens ≈ 40 KB; files above this are too large to force a full read
     LARGE_FILE_BYTES = 40_000
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
@@ -86,45 +104,27 @@ class FullFileReadRule(Rule):
             return []
         if ctx.tool_name != "Read":
             return []
-        tool_input = ctx.tool_input
-        if "offset" not in tool_input and "limit" not in tool_input:
+        ti = ctx.tool_input
+        if "offset" not in ti and "limit" not in ti:
             return []
-        # Allow partial reads for data/doc files that can be very large
-        target_path = None
-        for path_value in ctx.candidate_paths:
-            if any(path_value.lower().endswith(suffix) for suffix in self.EXEMPT_SUFFIXES):
-                return []
-            target_path = path_value
-
-        # Allow partial reads for large files (>~10k tokens)
-        if target_path:
-            try:
-                size = Path(target_path).stat().st_size
-                if size > self.LARGE_FILE_BYTES:
-                    return []
-            except OSError:
-                pass  # file not found / permission error — fall through to deny
-
-        if target_path:
-            msg = (
-                f"Please read `{target_path}` in full first (no offset/limit). "
-                "Partial reads are blocked for initial inspection. "
-                "Read the complete file, then use offset/limit for subsequent reads."
-            )
-        else:
-            msg = (
-                "Please read the full file first (no offset/limit). "
-                "Partial reads are blocked for initial inspection."
-            )
-
+        target = _find_read_target(ctx.candidate_paths, self.EXEMPT_SUFFIXES)
+        if target is None:
+            return []
+        if _is_large_file(target, self.LARGE_FILE_BYTES):
+            return []
+        msg = (
+            f"Please read `{target}` in full first "
+            f"(no offset/limit). Partial reads are blocked "
+            f"for initial inspection."
+        )
         return [
             RuleFinding(
                 rule_id=self.rule_id,
                 title=self.title,
-                severity=_severity("MEDIUM"),
+                severity=Severity.MEDIUM,
                 decision="deny",
                 message=msg,
-                metadata={"path": target_path or "", "target": "tool_input"},
+                metadata={"path": target, "target": "tool_input"},
             )
         ]
 
@@ -161,13 +161,44 @@ class ProtectedPathsRule(Rule):
                 RuleFinding(
                     rule_id=self.rule_id,
                     title=self.title,
-                    severity=_severity("HIGH"),
+                    severity=Severity.HIGH,
                     decision="deny",
-                    message=f"Protected path matched: {matched_path}. Modify configuration only with explicit approval or move the check into config.json.",
+                    message=(
+                        f"Protected path matched: {matched_path}. "
+                        f"Modify configuration only with explicit "
+                        f"approval or move the check into config.json."
+                    ),
                     metadata={"path": matched_path},
                 )
             ]
         return []
+
+
+_META_CHARS = frozenset("[](){}*+?|^$\\")
+
+_compiled_sensitive_cache: dict[tuple[str, ...], list[re.Pattern[str]]] = {}
+
+
+def _compile_sensitive_patterns(raw: list[str]) -> list[re.Pattern[str]]:
+    """Compile sensitive path patterns into regexes (cached).
+
+    Plain substring patterns are auto-escaped; patterns containing
+    regex metacharacters are compiled as-is.
+    """
+    cache_key = tuple(raw)
+    cached = _compiled_sensitive_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    compiled: list[re.Pattern[str]] = []
+    for raw_pattern in raw:
+        stripped = raw_pattern.strip()
+        if not stripped:
+            continue
+        has_meta = any(ch in _META_CHARS for ch in stripped)
+        expr = stripped if has_meta else re.escape(stripped)
+        compiled.append(re.compile(expr, re.IGNORECASE))
+    _compiled_sensitive_cache[cache_key] = compiled
+    return compiled
 
 
 class SensitiveDataRule(Rule):
@@ -175,90 +206,100 @@ class SensitiveDataRule(Rule):
     title = "Sensitive data protection"
     events = ("PreToolUse", "PermissionRequest")
 
-    # Suffixes that make an otherwise-sensitive path safe (templates, examples).
     SAFE_SUFFIXES = (
-        ".example",
-        ".sample",
-        ".template",
-        ".defaults",
-        ".dist",
-        ".test",
-        ".bak",
+        ".example", ".sample", ".template",
+        ".defaults", ".dist", ".test", ".bak",
     )
 
-    def _compile_patterns(self, raw: list[str]) -> list[re.Pattern[str]]:
-        """Compile sensitive path patterns into regexes.
-
-        Each raw pattern is treated as a regex.  For backward compatibility,
-        plain substring patterns (no regex metacharacters) are auto-wrapped
-        so they match as before — e.g. ``/.env`` becomes ``/\\.env`` with
-        proper escaping.  Patterns that already contain regex metacharacters
-        (``[``, ``(``, ``\\d``, etc.) are compiled as-is.
-        """
-        compiled: list[re.Pattern[str]] = []
-        meta_chars = set("[](){}*+?|^$\\")
-        for raw_pattern in raw:
-            stripped = raw_pattern.strip()
-            if not stripped:
-                continue
-            has_meta = any(ch in meta_chars for ch in stripped)
-            if has_meta:
-                expr = stripped
-            else:
-                expr = re.escape(stripped)
-            compiled.append(re.compile(expr, re.IGNORECASE))
-        return compiled
-
     def _is_safe_path(self, path_value: str) -> bool:
-        """Return True if the path ends with a safe suffix like .example."""
+        """Return True if the path ends with a safe suffix."""
         lowered = lower_path(path_value)
-        return any(lowered.endswith(suffix) for suffix in self.SAFE_SUFFIXES)
+        return any(lowered.endswith(s) for s in self.SAFE_SUFFIXES)
+
+    def _match_in_paths(
+        self,
+        paths: list[str],
+        compiled: list[re.Pattern[str]],
+    ) -> str | None:
+        """Return first path matching a sensitive pattern, or None."""
+        for path_value in paths:
+            if self._is_safe_path(path_value):
+                continue
+            lowered = lower_path(path_value)
+            if any(p.search(lowered) for p in compiled):
+                return path_value
+        return None
+
+    def _match_in_command(
+        self,
+        command: str,
+        compiled: list[re.Pattern[str]],
+    ) -> str | None:
+        """Return '[command]' if command contains a sensitive match."""
+        lowered = command.lower()
+        _WORD_BREAKS = frozenset(" \t\n;|&><")
+        for pattern in compiled:
+            for m in pattern.finditer(lowered):
+                rest = lowered[m.end():]
+                end = next(
+                    (i for i, ch in enumerate(rest) if ch in _WORD_BREAKS),
+                    len(rest),
+                )
+                tail = rest[:end]
+                is_safe = any(
+                    tail.startswith(s) or tail == s.lstrip(".")
+                    for s in self.SAFE_SUFFIXES
+                )
+                if not is_safe:
+                    return "[command]"
+        return None
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not _is_rule_enabled(ctx, self.rule_id):
             return []
-        compiled = self._compile_patterns(ctx.config.sensitive_path_patterns)
+        compiled = _compile_sensitive_patterns(
+            ctx.config.sensitive_path_patterns,
+        )
         if not compiled:
             return []
-        matched = None
-        for path_value in ctx.candidate_paths:
-            if self._is_safe_path(path_value):
-                continue
-            lowered = lower_path(path_value)
-            if any(pattern.search(lowered) for pattern in compiled):
-                matched = path_value
-                break
+        matched = self._match_in_paths(ctx.candidate_paths, compiled)
         if not matched and ctx.bash_command:
-            lowered_command = ctx.bash_command.lower()
-            for pattern in compiled:
-                for m in pattern.finditer(lowered_command):
-                    # Check the text after the match for a safe suffix
-                    rest = lowered_command[m.end():]
-                    # Extract the next "word" boundary (up to whitespace/end)
-                    end_idx = len(rest)
-                    for i, ch in enumerate(rest):
-                        if ch in (" ", "\t", "\n", ";", "|", "&", ">", "<"):
-                            end_idx = i
-                            break
-                    tail = rest[:end_idx]
-                    if not any(tail.startswith(suffix) or tail == suffix.lstrip(".")
-                              for suffix in self.SAFE_SUFFIXES):
-                        matched = "[command]"
-                        break
-                if matched:
-                    break
+            matched = self._match_in_command(ctx.bash_command, compiled)
         if not matched:
             return []
         return [
             RuleFinding(
                 rule_id=self.rule_id,
                 title=self.title,
-                severity=_severity("HIGH"),
+                severity=Severity.HIGH,
                 decision="deny",
                 message=f"Sensitive data access is blocked: {matched}",
                 metadata={"target": matched},
             )
         ]
+
+
+def _match_system_path(paths: list[str], prefixes: list[str]) -> str | None:
+    """Return the first path matching a system prefix, or None."""
+    for path_value in paths:
+        lowered = lower_path(path_value)
+        if any(lowered.startswith(p) for p in prefixes):
+            return path_value
+    return None
+
+
+def _match_system_command(command: str, prefixes: list[str]) -> str | None:
+    """Return '[command]' if command references a system path."""
+    lowered = command.lower()
+    for prefix in prefixes:
+        if not prefix.startswith("/"):
+            if prefix in lowered:
+                return "[command]"
+            continue
+        pat = r"(?:^|[\s;|&(])" + re.escape(prefix)
+        if re.search(pat, lowered):
+            return "[command]"
+    return None
 
 
 class SystemProtectionRule(Rule):
@@ -269,43 +310,40 @@ class SystemProtectionRule(Rule):
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not _is_rule_enabled(ctx, self.rule_id):
             return []
-        prefixes = [item.lower() for item in ctx.config.system_path_prefixes]
+        prefixes = [i.lower() for i in ctx.config.system_path_prefixes]
         if not prefixes:
             return []
-        matched = None
-        for path_value in ctx.candidate_paths:
-            lowered = lower_path(path_value)
-            if any(lowered.startswith(prefix) for prefix in prefixes):
-                matched = path_value
-                break
+        matched = _match_system_path(ctx.candidate_paths, prefixes)
         if not matched and ctx.bash_command:
-            lowered_command = ctx.bash_command.lower()
-            # Only match system prefixes that appear as actual absolute paths,
-            # not as substrings of project-relative paths like .venv/bin/
-            for prefix in prefixes:
-                # Must be preceded by whitespace, shell operator, or start of string
-                # AND the prefix must start with / (absolute path)
-                if not prefix.startswith("/"):
-                    if prefix in lowered_command:
-                        matched = "[command]"
-                        break
-                    continue
-                pattern = r"(?:^|[\s;|&(])" + re.escape(prefix)
-                if re.search(pattern, lowered_command):
-                    matched = "[command]"
-                    break
+            matched = _match_system_command(ctx.bash_command, prefixes)
         if not matched:
             return []
         return [
             RuleFinding(
                 rule_id=self.rule_id,
                 title=self.title,
-                severity=_severity("CRITICAL"),
+                severity=Severity.CRITICAL,
                 decision="deny",
-                message=f"Critical system path access is blocked: {matched}",
+                message=(
+                    f"Critical system path access is blocked: {matched}"
+                ),
                 metadata={"target": matched},
             )
         ]
+
+
+def _detect_git_bypass(command: str) -> str | None:
+    """Return bypass type string, or None if no bypass detected."""
+    lowered = command.lower()
+    git_cmds = ("git commit", "git push", "git merge")
+    if "--no-verify" in lowered and any(k in lowered for k in git_cmds):
+        return "--no-verify"
+    n_tokens = (" -n ", "\t-n ", " -an ", " -nm ")
+    if "git commit" in lowered and any(t in lowered for t in n_tokens):
+        return "-n (shorthand for --no-verify)"
+    if "core.hookspath" in lowered and "/dev/null" in lowered:
+        return "core.hookspath=/dev/null"
+    return None
 
 
 class GitNoVerifyRule(Rule):
@@ -316,38 +354,29 @@ class GitNoVerifyRule(Rule):
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not _is_rule_enabled(ctx, self.rule_id):
             return []
-        command = ctx.bash_command
-        if not command:
+        if not ctx.bash_command:
             return []
-        lowered = command.lower()
-        bypass_type = None
-        if "--no-verify" in lowered and any(keyword in lowered for keyword in ("git commit", "git push", "git merge")):
-            bypass_type = "--no-verify"
-        elif "git commit" in lowered and any(token in lowered for token in (" -n ", "\t-n ", " -an ", " -nm ")):
-            bypass_type = "-n (shorthand for --no-verify)"
-        elif "core.hookspath" in lowered and "/dev/null" in lowered:
-            bypass_type = "core.hookspath=/dev/null"
-        else:
+        bypass = _detect_git_bypass(ctx.bash_command)
+        if not bypass:
             return []
-
         msg = (
-            f"Git hook bypass detected: `{bypass_type}`. "
-            "Pre-commit and pre-push hooks exist for a reason — "
-            "they run linters, type checks, and tests.\n\n"
-            "Instead of:\n"
-            "    git commit --no-verify -m 'quick fix'\n\n"
-            "Use:\n"
-            "    git commit -m 'fix: resolve type error in parser'\n\n"
-            "If hooks are failing, fix the issues they found rather than skipping them."
+            f"Git hook bypass detected: `{bypass}`. "
+            "Pre-commit and pre-push hooks exist for a "
+            "reason — they run linters, type checks, and "
+            "tests.\n\nIf hooks are failing, fix the issues "
+            "they found rather than skipping them."
         )
         return [
             RuleFinding(
                 rule_id=self.rule_id,
                 title=self.title,
-                severity=_severity("HIGH"),
+                severity=Severity.HIGH,
                 decision="deny",
                 message=msg,
-                metadata={"bypass_type": bypass_type, "command": command[:200]},
+                metadata={
+                    "bypass_type": bypass,
+                    "command": ctx.bash_command[:200],
+                },
             )
         ]
 
@@ -365,7 +394,7 @@ class SearchReminderRule(Rule):
                 RuleFinding(
                     rule_id=self.rule_id,
                     title=self.title,
-                    severity=_severity("LOW"),
+                    severity=Severity.LOW,
                     additional_context=ctx.config.search_reminder_message,
                 )
             ]
@@ -374,11 +403,55 @@ class SearchReminderRule(Rule):
                 RuleFinding(
                     rule_id=self.rule_id,
                     title=self.title,
-                    severity=_severity("LOW"),
+                    severity=Severity.LOW,
                     additional_context=ctx.config.search_reminder_message,
                 )
             ]
         return []
+
+
+def _collect_quality_commands(ctx: "HookContext") -> list[str]:
+    """Gather post-edit quality commands for detected languages."""
+    commands: list[str] = []
+    for language in sorted(ctx.languages):
+        commands.extend(
+            ctx.config.post_edit_quality_commands.get(language, []),
+        )
+    return commands
+
+
+def _run_quality_commands(
+    commands: list[str],
+    ctx: "HookContext",
+) -> list[str]:
+    """Run each command and return formatted failure descriptions."""
+    failures: list[str] = []
+    for command in commands:
+        formatted = command.format(
+            files=" ".join(ctx.candidate_paths),
+            first_file=ctx.candidate_paths[0] if ctx.candidate_paths else "",
+            language=",".join(sorted(ctx.languages)),
+        )
+        result = run_shell(formatted, ctx.config.root)
+        ctx.trace.subprocess(
+            {
+                "event_name": ctx.event_name,
+                "session_id": ctx.session_id,
+                "command": result.command,
+                "cwd": result.cwd,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+        )
+        if result.returncode != 0:
+            desc = (
+                f"$ {result.command}\n"
+                f"[exit {result.returncode}]\n"
+                f"{result.stdout}{result.stderr}"
+            ).strip()
+            failures.append(desc)
+    return failures
 
 
 class PostEditQualityRule(Rule):
@@ -389,56 +462,30 @@ class PostEditQualityRule(Rule):
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not _is_rule_enabled(ctx, self.rule_id):
             return []
-        if not ctx.config.post_edit_quality_enabled:
+        if not ctx.config.post_edit_quality_enabled or not ctx.languages:
             return []
-        if not ctx.languages:
-            return []
-        commands: list[str] = []
-        for language in sorted(ctx.languages):
-            commands.extend(ctx.config.post_edit_quality_commands.get(language, []))
+        commands = _collect_quality_commands(ctx)
         if not commands:
             return []
-        failures: list[str] = []
-        for command in commands:
-            formatted = command.format(
-                files=" ".join(ctx.candidate_paths),
-                first_file=ctx.candidate_paths[0] if ctx.candidate_paths else "",
-                language=",".join(sorted(ctx.languages)),
-            )
-            result = run_shell(formatted, ctx.config.root)
-            ctx.trace.subprocess(
-                {
-                    "event_name": ctx.event_name,
-                    "session_id": ctx.session_id,
-                    "command": result.command,
-                    "cwd": result.cwd,
-                    "returncode": result.returncode,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                }
-            )
-            if result.returncode != 0:
-                failures.append(
-                    f"$ {result.command}\n[exit {result.returncode}]\n{result.stdout}{result.stderr}".strip()
-                )
-
-        if failures and ctx.config.post_edit_quality_block_on_failure:
+        failures = _run_quality_commands(commands, ctx)
+        if not failures:
+            return []
+        joined = "\n\n".join(failures)
+        if ctx.config.post_edit_quality_block_on_failure:
             return [
                 RuleFinding(
                     rule_id=self.rule_id,
                     title=self.title,
-                    severity=_severity("HIGH"),
+                    severity=Severity.HIGH,
                     decision="block",
-                    message="Post-edit quality gate failed.\n\n" + "\n\n".join(failures),
+                    message=f"Post-edit quality gate failed.\n\n{joined}",
                 )
             ]
-        if failures:
-            return [
-                RuleFinding(
-                    rule_id=self.rule_id,
-                    title=self.title,
-                    severity=_severity("LOW"),
-                    additional_context="Post-edit quality commands reported failures:\n\n" + "\n\n".join(failures),
-                )
-            ]
-        return []
+        return [
+            RuleFinding(
+                rule_id=self.rule_id,
+                title=self.title,
+                severity=Severity.LOW,
+                additional_context=f"Post-edit quality failures:\n\n{joined}",
+            )
+        ]

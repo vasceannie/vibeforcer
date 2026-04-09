@@ -1947,28 +1947,23 @@ class TestSensitiveDataRegexPatterns:
 
     def test_pattern_auto_escaping(self, bundle_root):
         """Plain substring patterns are auto-escaped (dots become literal)."""
-        from vibeforcer.rules.common import SensitiveDataRule
-        rule = SensitiveDataRule()
-        compiled = rule._compile_patterns(["/.env"])
-        # Should match /.env literally
+        from vibeforcer.rules.common import _compile_sensitive_patterns
+        compiled = _compile_sensitive_patterns(["/.env"])
         assert compiled[0].search("/project/.env"), "Should match /.env"
-        # Should NOT match /xenv (dot is escaped, not wildcard)
         assert not compiled[0].search("/xenv"), "Escaped dot should not match 'x'"
 
     def test_regex_pattern_preserved(self, bundle_root):
         """Patterns with regex metacharacters are compiled as-is."""
-        from vibeforcer.rules.common import SensitiveDataRule
-        rule = SensitiveDataRule()
-        compiled = rule._compile_patterns([r"\.env\.(local|staging|production)$"])
+        from vibeforcer.rules.common import _compile_sensitive_patterns
+        compiled = _compile_sensitive_patterns([r"\.env\.(local|staging|production)$"])
         assert compiled[0].search("config/.env.local"), "Should match .env.local"
         assert compiled[0].search("config/.env.production"), "Should match .env.production"
         assert not compiled[0].search("config/.env.example"), "Should not match .env.example"
 
     def test_empty_patterns_skipped(self, bundle_root):
         """Empty or whitespace-only patterns are silently skipped."""
-        from vibeforcer.rules.common import SensitiveDataRule
-        rule = SensitiveDataRule()
-        compiled = rule._compile_patterns(["", "  ", "/.env"])
+        from vibeforcer.rules.common import _compile_sensitive_patterns
+        compiled = _compile_sensitive_patterns(["", "  ", "/.env"])
         assert len(compiled) == 1, f"Expected 1 compiled pattern, got {len(compiled)}"
 
     def test_safe_suffixes_constant(self, bundle_root):

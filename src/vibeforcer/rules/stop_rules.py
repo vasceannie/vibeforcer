@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import json as _json
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule
+
+if TYPE_CHECKING:
+    from vibeforcer.context import HookContext
+
+# 32 KB tail buffer — large enough to capture the last assistant turn
+# even when preceded by a large tool response (e.g., a full file read).
+_TAIL_BYTES = 32_768
 
 
 def _is_worktree(path_str: str) -> bool:
@@ -30,75 +39,90 @@ def _is_worktree(path_str: str) -> bool:
         return False
 
 
+def _tail_read(file_path: Path, num_bytes: int) -> str:
+    """Read the last *num_bytes* of a file as UTF-8 text."""
+    with open(file_path, "rb") as fh:
+        try:
+            fh.seek(-num_bytes, 2)
+        except OSError:
+            fh.seek(0)
+        return fh.read().decode("utf-8", errors="replace")
+
+
+def _extract_content_text(msg: object) -> str:
+    """Extract text from an assistant message content field."""
+    if isinstance(msg, str):
+        return msg
+    if isinstance(msg, list):
+        return " ".join(
+            block.get("text", "")
+            for block in msg
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
+
+
+def _last_assistant_response(transcript_path: str) -> str:
+    """Read the last assistant turn from a Claude Code JSONL transcript."""
+    tp = Path(transcript_path)
+    if not tp.exists():
+        return ""
+    try:
+        tail = _tail_read(tp, _TAIL_BYTES)
+    except OSError:
+        return ""
+    for line in reversed(tail.strip().splitlines()[-20:]):
+        try:
+            entry = _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
+        role = entry.get("type") or entry.get("role")
+        if role == "assistant":
+            msg = entry.get("message", {}).get("content", "")
+            return _extract_content_text(msg)
+    return ""
+
+
+def _get_stop_response(ctx: HookContext) -> str:
+    """Extract the assistant response from a Stop/SubagentStop event."""
+    transcript_path = ctx.payload.payload.get("transcript_path", "")
+    if isinstance(transcript_path, str) and transcript_path:
+        response = _last_assistant_response(transcript_path)
+        if response:
+            return response
+    fallback = ctx.payload.payload.get("stop_response", "")
+    return str(fallback) if fallback else ""
+
+
+_PREEXISTING_PHRASES = (
+    "pre-existing",
+    "preexisting",
+    "already existed",
+    "was already",
+    "existed before",
+    "not introduced by",
+    "outside the scope",
+    "out of scope",
+    "not my change",
+)
+
+
 class IgnorePreexistingRule(Rule):
     """Block responses that dismiss issues as pre-existing."""
+
     rule_id = "STOP-001"
     title = "Block ignoring pre-existing issues"
     events = ("Stop", "SubagentStop")
 
-    PHRASES = (
-        "pre-existing",
-        "preexisting",
-        "already existed",
-        "was already",
-        "existed before",
-        "not introduced by",
-        "outside the scope",
-        "out of scope",
-        "not my change",
-    )
-
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         enabled = ctx.config.enabled_rules.get(self.rule_id)
         if enabled is not None and not enabled:
             return []
-        # The Stop event does NOT include the model response text.
-        # Per Claude Code docs, we must read transcript_path to inspect
-        # the last assistant turn. Fall back to stop_response for tests.
-        response = ""
-        transcript_path = ctx.payload.payload.get("transcript_path", "")
-        if transcript_path:
-            import json as _json
-            from pathlib import Path as _Path
-            tp = _Path(transcript_path)
-            if tp.exists():
-                try:
-                    # Tail-read: only read last 8KB instead of entire transcript
-                    _TAIL_BYTES = 8192
-                    with open(tp, "rb") as fh:
-                        try:
-                            fh.seek(-_TAIL_BYTES, 2)
-                        except OSError:
-                            fh.seek(0)
-                        tail = fh.read().decode("utf-8", errors="replace")
-                    lines = tail.strip().splitlines()
-                    for line in reversed(lines[-20:]):
-                        try:
-                            entry = _json.loads(line)
-                        except _json.JSONDecodeError:
-                            continue
-                        if entry.get("type") == "assistant" or entry.get("role") == "assistant":
-                            msg = entry.get("message", {}).get("content", "")
-                            if isinstance(msg, list):
-                                response = " ".join(
-                                    block.get("text", "")
-                                    for block in msg
-                                    if isinstance(block, dict) and block.get("type") == "text"
-                                )
-                            elif isinstance(msg, str):
-                                response = msg
-                            break
-                except OSError:
-                    pass
-        # Fallback for test fixtures that pass stop_response directly
-        if not response:
-            response = ctx.payload.payload.get("stop_response", "")
-            if not isinstance(response, str):
-                response = str(response)
+        response = _get_stop_response(ctx)
         if not response:
             return []
         lowered = response.lower()
-        for phrase in self.PHRASES:
+        for phrase in _PREEXISTING_PHRASES:
             if phrase in lowered:
                 return [
                     RuleFinding(
@@ -106,236 +130,283 @@ class IgnorePreexistingRule(Rule):
                         title=self.title,
                         severity=Severity.HIGH,
                         decision="block",
-                        message="Do not dismiss issues as pre-existing. If you found a problem, fix it or explicitly flag it for follow-up.",
+                        message=(
+                            "Do not dismiss issues as pre-existing. "
+                            "If you found a problem, fix it or "
+                            "explicitly flag it for follow-up."
+                        ),
                         metadata={"matched_phrase": phrase},
                     )
                 ]
         return []
 
 
+_QUALITY_REMINDER = (
+    "Before stopping: verify all tests pass and quality "
+    "gates are clean. Run `make quality` or the "
+    "project-specific quality command if available."
+)
+
+
+def _is_rule_on(ctx: HookContext, rule_id: str) -> bool:
+    enabled = ctx.config.enabled_rules.get(rule_id)
+    return enabled is None or bool(enabled)
+
+
 class RequireMakeQualityRule(Rule):
     """Remind to run quality gate before stopping."""
+
     rule_id = "STOP-002"
     title = "Require make quality reminder"
     events = ("Stop", "SubagentStop")
 
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        enabled = ctx.config.enabled_rules.get(self.rule_id)
-        if enabled is not None and not enabled:
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
+        if not _is_rule_on(ctx, self.rule_id):
             return []
         return [
             RuleFinding(
                 rule_id=self.rule_id,
                 title=self.title,
                 severity=Severity.LOW,
-                additional_context="Before stopping: verify all tests pass and quality gates are clean. Run `make quality` or the project-specific quality command if available.",
+                additional_context=_QUALITY_REMINDER,
             )
         ]
 
 
 class WarnLargeFileRule(Rule):
     """Warn when editing files that are suspiciously large."""
+
     rule_id = "WARN-LARGE-001"
     title = "Warn on large file"
     events = ("PreToolUse", "PermissionRequest")
+    MAX_CHARS = 50_000
 
-    MAX_CHARS = 50000
-
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        enabled = ctx.config.enabled_rules.get(self.rule_id)
-        if enabled is not None and not enabled:
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
+        if not _is_rule_on(ctx, self.rule_id):
             return []
-        findings = []
+        findings: list[RuleFinding] = []
         for target in ctx.content_targets:
-            if len(target.content) > self.MAX_CHARS:
+            char_count = len(target.content)
+            if char_count > self.MAX_CHARS:
                 findings.append(
                     RuleFinding(
                         rule_id=self.rule_id,
                         title=self.title,
                         severity=Severity.MEDIUM,
-                        additional_context=f"WARNING: File {target.path} content is {len(target.content):,} characters. Consider splitting into smaller modules.",
-                        metadata={"path": target.path, "chars": len(target.content)},
+                        additional_context=(
+                            f"WARNING: File {target.path} content "
+                            f"is {char_count:,} characters. Consider "
+                            f"splitting into smaller modules."
+                        ),
+                        metadata={"path": target.path, "chars": char_count},
                     )
                 )
         return findings
 
 
-class HookInfraExecProtectionRule(Rule):
-    """Block modification of the hook layer infrastructure and config.
+# ---------------------------------------------------------------------------
+# Hook infrastructure protection
+# ---------------------------------------------------------------------------
 
-    Protects installed vibeforcer paths and its XDG config directory from
-    agent-driven edits. The protection is skipped when the target path is
-    inside a git worktree — this allows developing vibeforcer in a worktree
-    of its source repo without the hooks fighting back.
-    """
+_READ_TOOLS = frozenset({"read", "grep", "glob"})
+
+_INFRA_FRAGMENTS = (
+    "hook-layer/config.json", "hook_layer/",
+    "vibeforcer/", ".claude/hooks/",
+)
+
+_CONFIG_FRAGMENTS = (
+    "config/vibeforcer/config.json",
+    "config/vibeforcer/rules",
+)
+
+
+def _is_safe_bash_for_path(ctx: HookContext) -> bool:
+    """Return True if the bash command is a safe read-only operation."""
+    if not ctx.tool_name or ctx.tool_name.lower() != "bash":
+        return False
+    from vibeforcer.rules.common import _is_safe_read_shell
+    return _is_safe_read_shell(ctx.bash_command.lower())
+
+
+def _is_modifying_tool(ctx: HookContext) -> bool:
+    """Return True if the tool can modify files (bash or edit-like)."""
+    if ctx.tool_name and ctx.tool_name.lower() == "bash":
+        return True
+    from vibeforcer.util.payloads import is_edit_like_tool
+    return is_edit_like_tool(ctx.tool_name)
+
+
+def _infra_deny(path_value: str, fragment: str, kind: str) -> list[RuleFinding]:
+    label = "config" if kind == "config" else "infrastructure"
+    return [
+        RuleFinding(
+            rule_id="GLOBAL-BUILTIN-HOOK-INFRA-EXEC",
+            title="Hook layer execution protection",
+            severity=Severity.CRITICAL,
+            decision="deny",
+            message=(
+                f"Modifying the hook layer {label} "
+                f"({path_value}) is blocked. "
+                f"These files are protected."
+            ),
+            metadata={"path": path_value, "fragment": fragment, "kind": kind},
+        )
+    ]
+
+
+def _check_config_path(path_value: str, ctx: HookContext) -> list[RuleFinding] | None:
+    """Check config fragments — always protected, no worktree exception."""
+    lowered = path_value.lower()
+    for cfrag in _CONFIG_FRAGMENTS:
+        if cfrag not in lowered:
+            continue
+        if _is_safe_bash_for_path(ctx):
+            return []
+        if _is_modifying_tool(ctx):
+            return _infra_deny(path_value, cfrag, "config")
+    return None
+
+
+def _check_infra_path(path_value: str, ctx: HookContext) -> list[RuleFinding] | None:
+    """Check infra fragments — worktree-exempt."""
+    lowered = path_value.lower()
+    for frag in _INFRA_FRAGMENTS:
+        if frag not in lowered:
+            continue
+        if _is_worktree(path_value):
+            return []
+        if _is_safe_bash_for_path(ctx):
+            return []
+        if _is_modifying_tool(ctx):
+            return _infra_deny(path_value, frag, "infra")
+    return None
+
+
+class HookInfraExecProtectionRule(Rule):
+    """Block modification of hook layer infrastructure and config."""
+
     rule_id = "GLOBAL-BUILTIN-HOOK-INFRA-EXEC"
     title = "Hook layer execution protection"
     events = ("PreToolUse", "PermissionRequest")
 
-    PROTECTED_FRAGMENTS = (
-        "hook-layer/config.json",
-        "hook_layer/",
-        "vibeforcer/",
-        ".claude/hooks/",
-    )
-
-    # XDG config paths that should be protected regardless of worktree status
-    CONFIG_FRAGMENTS = (
-        "config/vibeforcer/config.json",
-        "config/vibeforcer/rules",
-    )
-
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        enabled = ctx.config.enabled_rules.get(self.rule_id)
-        if enabled is not None and not enabled:
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
+        if not _is_rule_on(ctx, self.rule_id):
             return []
-        if ctx.tool_name and ctx.tool_name.lower() in ("read", "grep", "glob"):
+        if ctx.tool_name and ctx.tool_name.lower() in _READ_TOOLS:
             return []
         for path_value in ctx.candidate_paths:
-            lowered = path_value.lower()
-
-            # Check config fragments — always protected (no worktree exception)
-            for cfrag in self.CONFIG_FRAGMENTS:
-                if cfrag in lowered:
-                    if ctx.tool_name and ctx.tool_name.lower() == "bash":
-                        cmd = ctx.bash_command.lower()
-                        from vibeforcer.rules.common import _is_safe_read_shell
-                        if _is_safe_read_shell(cmd):
-                            return []
-                        return self._deny(path_value, cfrag, "config")
-                    from vibeforcer.util.payloads import is_edit_like_tool
-                    if is_edit_like_tool(ctx.tool_name):
-                        return self._deny(path_value, cfrag, "config")
-
-            # Check source/infra fragments — skip if inside a worktree
-            for fragment in self.PROTECTED_FRAGMENTS:
-                if fragment in lowered:
-                    # Worktree exception: developing in a worktree is allowed
-                    if _is_worktree(path_value):
-                        return []
-
-                    if ctx.tool_name and ctx.tool_name.lower() == "bash":
-                        cmd = ctx.bash_command.lower()
-                        from vibeforcer.rules.common import _is_safe_read_shell
-                        if _is_safe_read_shell(cmd):
-                            return []
-                        return self._deny(path_value, fragment, "infra")
-                    from vibeforcer.util.payloads import is_edit_like_tool
-                    if is_edit_like_tool(ctx.tool_name):
-                        return self._deny(path_value, fragment, "infra")
+            cfg = _check_config_path(path_value, ctx)
+            if cfg is not None:
+                return cfg
+            infra = _check_infra_path(path_value, ctx)
+            if infra is not None:
+                return infra
         return []
 
-    @staticmethod
-    def _deny(path_value: str, fragment: str, kind: str) -> list[RuleFinding]:
-        label = "config" if kind == "config" else "infrastructure"
-        return [
-            RuleFinding(
-                rule_id="GLOBAL-BUILTIN-HOOK-INFRA-EXEC",
-                title="Hook layer execution protection",
-                severity=Severity.CRITICAL,
-                decision="deny",
-                message=f"Modifying the hook layer {label} ({path_value}) is blocked. These files are protected.",
-                metadata={"path": path_value, "fragment": fragment, "kind": kind},
-            )
-        ]
+
+# ---------------------------------------------------------------------------
+# Rulebook security
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_SECURITY_PATTERNS = tuple(
+    _re.compile(p, _re.IGNORECASE)
+    for p in (
+        "bypass_permissions",
+        "allowManagedHooksOnly",
+        r"disable.*guard",
+        r"disable.*rule",
+        r"skip.*validation",
+    )
+)
+
+_SECURITY_EXCLUDED = (
+    "hook_layer/", "vibeforcer/", "hook-layer/",
+    ".claude/hooks/", "test_", "fixture",
+)
 
 
 class RulebookSecurityRule(Rule):
     """Prevent disabling or weakening security guardrails."""
+
     rule_id = "BUILTIN-RULEBOOK-SECURITY"
     title = "Rulebook security guardrails"
     events = ("PreToolUse", "PermissionRequest")
 
-    SECURITY_PATTERNS = (
-        "bypass_permissions",
-        "allowManagedHooksOnly",
-        "disable.*guard",
-        "disable.*rule",
-        "skip.*validation",
-    )
-
-    # Paths that legitimately reference security config keys
-    EXCLUDED_PATH_FRAGMENTS = (
-        "hook_layer/",
-        "vibeforcer/",
-        "hook-layer/",
-        ".claude/hooks/",
-        "test_",
-        "fixture",
-    )
-
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        enabled = ctx.config.enabled_rules.get(self.rule_id)
-        if enabled is not None and not enabled:
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
+        if not _is_rule_on(ctx, self.rule_id):
             return []
-        import re
         for target in ctx.content_targets:
-            # Skip hook infrastructure and test files
-            lowered_path = target.path.lower()
-            if any(frag in lowered_path for frag in self.EXCLUDED_PATH_FRAGMENTS):
+            lowered = target.path.lower()
+            if any(f in lowered for f in _SECURITY_EXCLUDED):
                 continue
-            for pattern in self.SECURITY_PATTERNS:
-                if re.search(pattern, target.content, re.IGNORECASE):
+            for pat in _SECURITY_PATTERNS:
+                if pat.search(target.content):
                     return [
                         RuleFinding(
                             rule_id=self.rule_id,
                             title=self.title,
                             severity=Severity.HIGH,
                             decision="deny",
-                            message=f"Modifying security guardrail settings is blocked in {target.path}. Do not disable rules or bypass permissions.",
-                            metadata={"path": target.path, "pattern": pattern},
+                            message=(
+                                "Modifying security guardrail "
+                                f"settings is blocked in {target.path}. "
+                                "Do not disable rules or "
+                                "bypass permissions."
+                            ),
+                            metadata={
+                                "path": target.path,
+                                "pattern": pat.pattern,
+                            },
                         )
                     ]
         return []
 
 
+# ---------------------------------------------------------------------------
+# Session start context
+# ---------------------------------------------------------------------------
+
+_GIT_COMMANDS: list[tuple[list[str], str]] = [
+    (["git", "log", "--oneline", "-10"],
+     "## Recent commits\n```\n{output}\n```"),
+    (["git", "status", "--short"],
+     "## Working tree status\n```\n{output}\n```"),
+    (["git", "branch", "--show-current"],
+     "Current branch: `{output}`"),
+]
+
+
+def _collect_git_context(cwd: str) -> list[str]:
+    """Run git commands and collect non-empty output fragments."""
+    fragments: list[str] = []
+    for cmd, template in _GIT_COMMANDS:
+        try:
+            result = subprocess.run(
+                cmd, cwd=cwd,
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        output = result.stdout.strip()
+        if result.returncode == 0 and output:
+            fragments.append(template.format(output=output))
+    return fragments
+
+
 class SessionStartContextRule(Rule):
     """Inject project context on session start."""
+
     rule_id = "SESSION-001"
     title = "Session start context injection"
     events = ("SessionStart",)
 
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        enabled = ctx.config.enabled_rules.get(self.rule_id)
-        if enabled is not None and not enabled:
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
+        if not _is_rule_on(ctx, self.rule_id):
             return []
-        import subprocess
-        fragments = []
-        cwd = str(ctx.cwd)
-
-        # Recent git log
-        try:
-            result = subprocess.run(
-                ["git", "log", "--oneline", "-10"],
-                cwd=cwd, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                fragments.append(f"## Recent commits\n```\n{result.stdout.strip()}\n```")
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-
-        # Git status
-        try:
-            result = subprocess.run(
-                ["git", "status", "--short"],
-                cwd=cwd, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                fragments.append(f"## Working tree status\n```\n{result.stdout.strip()}\n```")
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-
-        # Current branch
-        try:
-            result = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=cwd, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                fragments.append(f"Current branch: `{result.stdout.strip()}`")
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-
+        fragments = _collect_git_context(str(ctx.cwd))
         if not fragments:
             return []
         return [
@@ -343,31 +414,39 @@ class SessionStartContextRule(Rule):
                 rule_id=self.rule_id,
                 title=self.title,
                 severity=Severity.LOW,
-                additional_context="# Project Context (auto-injected)\n\n" + "\n\n".join(fragments),
+                additional_context=(
+                    "# Project Context (auto-injected)\n\n"
+                    + "\n\n".join(fragments)
+                ),
             )
         ]
 
 
+# ---------------------------------------------------------------------------
+# Config change guard
+# ---------------------------------------------------------------------------
+
+_CONFIG_BLOCKED_SOURCES = (
+    "project_settings", "local_settings", "user_settings",
+)
+
+
 class ConfigChangeGuardRule(Rule):
     """Block config changes that weaken security."""
+
     rule_id = "CONFIG-001"
     title = "Config change guard"
     events = ("ConfigChange",)
 
-    BLOCKED_SOURCES = ("project_settings", "local_settings", "user_settings")
-
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        enabled = ctx.config.enabled_rules.get(self.rule_id)
-        if enabled is not None and not enabled:
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
+        if not _is_rule_on(ctx, self.rule_id):
             return []
         source = ctx.payload.payload.get("source", "")
-        # Only guard non-policy changes
-        if source not in self.BLOCKED_SOURCES:
+        if source not in _CONFIG_BLOCKED_SOURCES:
             return []
         changes = ctx.payload.payload.get("changes", {})
         if not isinstance(changes, dict):
             return []
-        # Block disableAllHooks
         if changes.get("disableAllHooks") is True:
             return [
                 RuleFinding(
@@ -375,11 +454,10 @@ class ConfigChangeGuardRule(Rule):
                     title=self.title,
                     severity=Severity.CRITICAL,
                     decision="block",
-                    message="Disabling all hooks is blocked. Do not set disableAllHooks: true.",
+                    message="Disabling all hooks is blocked.",
                     metadata={"source": source},
                 )
             ]
-        # Block hook removal/modification
         if "hooks" in changes:
             return [
                 RuleFinding(
@@ -387,7 +465,7 @@ class ConfigChangeGuardRule(Rule):
                     title=self.title,
                     severity=Severity.HIGH,
                     decision="block",
-                    message="Modifying hook configuration via settings changes is blocked. Edit hook files directly with explicit approval.",
+                    message="Modifying hook config is blocked.",
                     metadata={"source": source},
                 )
             ]
