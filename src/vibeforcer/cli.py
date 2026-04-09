@@ -13,8 +13,7 @@ from vibeforcer.constants import (
 
 VALID_PLATFORMS = ("claude", "codex", "opencode")
 _PLATFORM_HELP = (
-    "Target platform. Choices: "
-    f"{', '.join(VALID_PLATFORMS)} (default: claude)"
+    f"Target platform. Choices: {', '.join(VALID_PLATFORMS)} (default: claude)"
 )
 
 
@@ -48,7 +47,7 @@ def cmd_handle(args: argparse.Namespace) -> int:
     return _dump_output(result.output)
 
 
-def cmd_handle_async(args: argparse.Namespace) -> int:
+def cmd_handle_async(_args: argparse.Namespace) -> int:
     """Run async post-edit quality jobs."""
     from vibeforcer.async_jobs import run_async_jobs
 
@@ -62,7 +61,9 @@ def cmd_handle_async(args: argparse.Namespace) -> int:
 def cmd_check(args: argparse.Namespace) -> int:
     """Check whether the quality gate is active for a given repo path."""
     from vibeforcer.config import (
-        is_path_skipped, is_repo_disabled, load_config,
+        is_path_skipped,
+        is_repo_disabled,
+        load_config,
     )
 
     target = Path(args.path).resolve()
@@ -71,8 +72,10 @@ def cmd_check(args: argparse.Namespace) -> int:
     skipped = is_path_skipped(target, config.skip_paths)
     status = "DISABLED" if (disabled or skipped) else "ACTIVE"
     info = {
-        "path": str(target), "status": status,
-        "repo_disabled": disabled, "path_skipped": skipped,
+        "path": str(target),
+        "status": status,
+        "repo_disabled": disabled,
+        "path_skipped": skipped,
         "skip_paths": config.skip_paths,
     }
     print(json.dumps(info, indent=2))
@@ -97,25 +100,29 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def cmd_install(args: argparse.Namespace) -> int:
     """Install vibeforcer hooks into a platform's config."""
     from vibeforcer.installer import install_platform
+
     return install_platform(args.platform, dry_run=args.dry_run)
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
     """Remove vibeforcer hooks from a platform's config."""
     from vibeforcer.installer import uninstall_platform
+
     return uninstall_platform(args.platform, dry_run=args.dry_run)
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
     """Analyze hook activity logs and print a report."""
     from vibeforcer.stats import run_stats
+
     return run_stats(
         log_path=args.log if args.log else None,
-        days=args.days, as_json=args.json,
+        days=args.days,
+        as_json=args.json,
     )
 
 
-def cmd_config_show(args: argparse.Namespace) -> int:
+def cmd_config_show(_args: argparse.Namespace) -> int:
     """Show the effective configuration."""
     from vibeforcer.config import load_config, resolve_config_path
 
@@ -126,8 +133,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"# Trace dir: {config.trace_dir}")
     print(f"# Root: {config.root}")
     rules_msg = (
-        f"{len(config.enabled_rules)} toggles, "
-        f"{len(config.regex_rules)} regex rules"
+        f"{len(config.enabled_rules)} toggles, {len(config.regex_rules)} regex rules"
     )
     print(f"# Rules: {rules_msg}")
     ast_status = "enabled" if config.python_ast_enabled else "disabled"
@@ -184,14 +190,16 @@ def _copy_prompt_context(base_dir: Path, resource_path) -> None:
         src = resource_path("prompt_context") / name
         if src.exists():
             (ctx_dir / name).write_text(
-                src.read_text(encoding="utf-8"), encoding="utf-8",
+                src.read_text(encoding="utf-8"),
+                encoding="utf-8",
             )
     print(f"Created: {ctx_dir}")
 
 
-def cmd_config_path(args: argparse.Namespace) -> int:
+def cmd_config_path(_args: argparse.Namespace) -> int:
     """Print the resolved config file path."""
     from vibeforcer.config import resolve_config_path
+
     print(resolve_config_path())
     return 0
 
@@ -205,8 +213,10 @@ def _run_one_test(evaluate_payload, case: tuple) -> str:
     """Run one self-test case and return 'PASS' or 'FAIL'."""
     label, event, tool, tool_input, platform, expect_deny = case
     payload = {
-        "hook_event_name": event, "tool_name": tool,
-        "tool_input": tool_input, "cwd": "/tmp",
+        "hook_event_name": event,
+        "tool_name": tool,
+        "tool_input": tool_input,
+        "cwd": "/tmp",
         "session_id": "self-test",
     }
     result = evaluate_payload(payload, platform=platform)
@@ -217,7 +227,7 @@ def _run_one_test(evaluate_payload, case: tuple) -> str:
     return status
 
 
-def cmd_test(args: argparse.Namespace) -> int:
+def cmd_test(_args: argparse.Namespace) -> int:
     """Run self-test / smoke test."""
     from vibeforcer.engine import evaluate_payload
 
@@ -227,16 +237,32 @@ def cmd_test(args: argparse.Namespace) -> int:
     env_path = str(Path.home() / ".env")
     noverify = {"command": "git commit --no-verify -m 'test'"}
     cases = [
-        ("git --no-verify \u2192 deny", "PreToolUse", "Bash",
-         noverify, "claude", True),
-        (".env write \u2192 deny", "PreToolUse", "Write",
-         {"file_path": env_path, "content": "SECRET=x"}, "claude", True),
-        ("echo hello \u2192 allow", "PreToolUse", "Bash",
-         {"command": "echo hello"}, "claude", False),
-        ("codex adapter \u2192 deny", "PreToolUse", "Bash",
-         noverify, "codex", True),
-        ("opencode adapter \u2192 deny", "tool.execute.before", "bash",
-         noverify, "opencode", True),
+        ("git --no-verify \u2192 deny", "PreToolUse", "Bash", noverify, "claude", True),
+        (
+            ".env write \u2192 deny",
+            "PreToolUse",
+            "Write",
+            {"file_path": env_path, "content": "SECRET=x"},
+            "claude",
+            True,
+        ),
+        (
+            "echo hello \u2192 allow",
+            "PreToolUse",
+            "Bash",
+            {"command": "echo hello"},
+            "claude",
+            False,
+        ),
+        ("codex adapter \u2192 deny", "PreToolUse", "Bash", noverify, "codex", True),
+        (
+            "opencode adapter \u2192 deny",
+            "tool.execute.before",
+            "bash",
+            noverify,
+            "opencode",
+            True,
+        ),
     ]
     statuses = [_run_one_test(evaluate_payload, c) for c in cases]
     all_pass = all(s == "PASS" for s in statuses)
@@ -245,9 +271,10 @@ def cmd_test(args: argparse.Namespace) -> int:
     return 0 if all_pass else 1
 
 
-def cmd_version(args: argparse.Namespace) -> int:
+def cmd_version(_args: argparse.Namespace) -> int:
     """Print version."""
     from vibeforcer import __version__
+
     print(f"vibeforcer {__version__}")
     return 0
 
@@ -261,7 +288,8 @@ def cmd_lint(args: argparse.Namespace) -> int:
 
     root = Path(getattr(args, "path", ".") or ".").resolve()
     dispatch = {
-        "check": _lint_check, "baseline": _lint_baseline,
+        "check": _lint_check,
+        "baseline": _lint_baseline,
         "init": _lint_init,
     }
     handler = dispatch.get(lint_command)
@@ -283,8 +311,10 @@ def _colorize(code: str, text: str, enabled: bool) -> str:
 
 
 def _tally_rule(
-    rule_name: str, violations: list,
-    baseline: dict, color: bool,
+    rule_name: str,
+    violations: list,
+    baseline: dict,
+    color: bool,
 ) -> tuple[int, int, int]:
     """Print one rule's status and return (total, new, fixed)."""
     allowed = baseline.get(rule_name, set())
@@ -358,14 +388,15 @@ def _lint_check(root: Path) -> int:
 
 
 def _print_lint_summary(
-    total_v: int, total_n: int, total_f: int, color: bool,
+    total_v: int,
+    total_n: int,
+    total_f: int,
+    color: bool,
 ) -> int:
     """Print lint check summary and return exit code."""
     print()
     if total_n == 0:
-        msg = (
-            f"\u2713 No new violations ({total_v} total, all baselined)"
-        )
+        msg = f"\u2713 No new violations ({total_v} total, all baselined)"
         print(_colorize("32", msg, color))
         if total_f:
             fix_msg = (
@@ -417,7 +448,7 @@ def _lint_baseline(root: Path) -> int:
 
 
 def _lint_init(root: Path) -> int:
-    from vibeforcer.resources import resource_path
+    from vibeforcer.lint._updater import render_quality_gate_toml
 
     root.mkdir(parents=True, exist_ok=True)
     dest = root / "quality_gate.toml"
@@ -427,9 +458,9 @@ def _lint_init(root: Path) -> int:
         return 1
 
     from vibeforcer.lint import __version__ as lint_version
-    template_path = resource_path("quality_gate_template.toml")
-    template = template_path.read_text(encoding="utf-8")
-    dest.write_text(template.format(version=lint_version), encoding="utf-8")
+
+    content = render_quality_gate_toml(version=lint_version)
+    dest.write_text(content, encoding="utf-8")
     print(f"\u2713 Created {dest}")
     print("  Edit it to match your project, then run: vibeforcer lint check")
     return 0
@@ -474,7 +505,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Global CLI guardrails engine for AI coding agents",
     )
     parser.add_argument(
-        "--version", action="store_true", help="Print version and exit",
+        "--version",
+        action="store_true",
+        help="Print version and exit",
     )
     sub = parser.add_subparsers(dest="command")
     _add_core_parsers(sub)
@@ -482,6 +515,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lint_parsers(sub)
 
     from vibeforcer.search.cli import build_search_parser
+
     build_search_parser(sub)
 
     version = sub.add_parser("version", help="Print version")
@@ -493,7 +527,9 @@ def _add_core_parsers(sub: argparse._SubParsersAction) -> None:
     """Register handle, handle-async, check, replay, install, uninstall, stats, test."""
     handle = sub.add_parser("handle", help="Read hook payload from stdin")
     handle.add_argument(
-        "--platform", choices=VALID_PLATFORMS, default="claude",
+        "--platform",
+        choices=VALID_PLATFORMS,
+        default="claude",
         help=_PLATFORM_HELP,
     )
     handle.set_defaults(func=cmd_handle)
@@ -509,7 +545,9 @@ def _add_core_parsers(sub: argparse._SubParsersAction) -> None:
     replay.add_argument("--payload", required=True)
     replay.add_argument("--pretty", action="store_true")
     replay.add_argument(
-        "--platform", choices=VALID_PLATFORMS, default="claude",
+        "--platform",
+        choices=VALID_PLATFORMS,
+        default="claude",
         help=_PLATFORM_HELP,
     )
     replay.set_defaults(func=cmd_replay)
@@ -572,7 +610,6 @@ def _add_lint_parsers(sub: argparse._SubParsersAction) -> None:
     lu.add_argument("--dry-run", action="store_true")
     lu.set_defaults(func=cmd_lint, lint_command="update")
 
-    lint.add_argument("path", nargs="?", default=".")
     lint.set_defaults(func=cmd_lint, lint_command="check")
 
 
@@ -601,6 +638,7 @@ def _dispatch_search(args: argparse.Namespace) -> int:
     query_args = getattr(args, "query_args", None)
     if query_args:
         from vibeforcer.search.cli import cmd_search
+
         args.query = query_args
         args.func = cmd_search
         return _run_search_func(args)
@@ -622,6 +660,7 @@ def _isx_main(argv: list[str] | None = None) -> int:
     query_args = getattr(args, "query_args", None)
     if query_args:
         from vibeforcer.search.cli import cmd_search
+
         args.query = query_args
         args.func = cmd_search
         return _run_search_func(args)

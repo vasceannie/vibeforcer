@@ -6,13 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, final
 
-try:
-    from typing import override
-except ImportError:  # pragma: no cover, Python <3.12
-    from typing_extensions import override
-
 from vibeforcer.models import RuleFinding, Severity
-from vibeforcer.rules.base import Rule
+from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import is_bash_tool, is_edit_like_tool
 
 if TYPE_CHECKING:
@@ -24,8 +19,12 @@ if TYPE_CHECKING:
 # Paths containing any of these segments are third-party / vendored code
 # and should be excluded from quality analysis.
 _THIRD_PARTY_SEGMENTS = (
-    ".venv/", "site-packages/", "node_modules/",
-    ".tox/", ".nox/", "/.eggs/",
+    ".venv/",
+    "site-packages/",
+    "node_modules/",
+    ".tox/",
+    ".nox/",
+    "/.eggs/",
 )
 
 
@@ -33,11 +32,6 @@ def _is_third_party_path(path: str) -> bool:
     """Return True if path points to third-party / vendored code."""
     normalised = path.replace("\\", "/")
     return any(seg in normalised for seg in _THIRD_PARTY_SEGMENTS)
-
-
-def _is_enabled(ctx: HookContext, rule_id: str, default: bool = True) -> bool:
-    value = ctx.config.enabled_rules.get(rule_id)
-    return default if value is None else bool(value)
 
 
 def _decision(ctx: HookContext) -> str:
@@ -60,7 +54,7 @@ def _evaluate_common(
     check_fn: CheckFn,
 ) -> list[RuleFinding]:
     """Shared evaluate logic for all Python AST rules."""
-    if not _is_enabled(ctx, rule.rule_id):
+    if not is_rule_enabled(ctx, rule.rule_id):
         return []
     if not ctx.config.python_ast_enabled:
         return []
@@ -107,7 +101,9 @@ class PythonLongMethodRule(Rule):
     title = "Block long Python methods"
     events = ("PreToolUse", "PermissionRequest", "PostToolUse")
 
-    def _check_source(self, source: str, path_value: str, ctx: HookContext) -> list[RuleFinding]:
+    def _check_source(
+        self, source: str, path_value: str, ctx: HookContext
+    ) -> list[RuleFinding]:
         """Parse source and return findings for any too-long functions."""
         if len(source) > ctx.config.python_ast_max_parse_chars:
             return []
@@ -131,7 +127,9 @@ class PythonLongMethodRule(Rule):
                 rule_id=self.rule_id,
                 title=self.title,
                 severity=Severity.HIGH,
-                decision="deny" if ctx.event_name in ("PreToolUse", "PermissionRequest") else "block",
+                decision="deny"
+                if ctx.event_name in ("PreToolUse", "PermissionRequest")
+                else "block",
                 message=(
                     f"Python function `{name}` in `{path_value}` is {span} lines long. "
                     f"Keep functions under {ctx.config.python_long_method_lines} lines or split them into helpers."
@@ -140,9 +138,8 @@ class PythonLongMethodRule(Rule):
             ),
         ]
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if not ctx.config.python_ast_enabled:
             return []
@@ -161,7 +158,11 @@ class PythonLongMethodRule(Rule):
             for path_value in ctx.candidate_paths:
                 if not path_value.lower().endswith((".py", ".pyi")):
                     continue
-                full_path = (ctx.config.root / path_value).resolve() if not Path(path_value).is_absolute() else Path(path_value)
+                full_path = (
+                    (ctx.config.root / path_value).resolve()
+                    if not Path(path_value).is_absolute()
+                    else Path(path_value)
+                )
                 try:
                     source = full_path.read_text(encoding="utf-8")
                 except OSError:
@@ -176,7 +177,9 @@ class PythonLongParameterRule(Rule):
     title = "Block long Python parameter lists"
     events = ("PreToolUse", "PermissionRequest", "PostToolUse")
 
-    def _check_source(self, source: str, path_value: str, ctx: HookContext) -> list[RuleFinding]:
+    def _check_source(
+        self, source: str, path_value: str, ctx: HookContext
+    ) -> list[RuleFinding]:
         """Parse source and return findings for any too-long parameter lists."""
         if len(source) > ctx.config.python_ast_max_parse_chars:
             return []
@@ -187,7 +190,11 @@ class PythonLongParameterRule(Rule):
         offenders: list[tuple[str, int]] = []
         for node in ast.walk(module):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+                args = (
+                    list(node.args.posonlyargs)
+                    + list(node.args.args)
+                    + list(node.args.kwonlyargs)
+                )
                 names = [arg.arg for arg in args]
                 if names and names[0] in {"self", "cls"}:
                     names = names[1:]
@@ -201,18 +208,23 @@ class PythonLongParameterRule(Rule):
                 rule_id=self.rule_id,
                 title=self.title,
                 severity=Severity.MEDIUM,
-                decision="deny" if ctx.event_name in ("PreToolUse", "PermissionRequest") else "block",
+                decision="deny"
+                if ctx.event_name in ("PreToolUse", "PermissionRequest")
+                else "block",
                 message=(
                     f"Python function `{name}` in `{path_value}` declares {count} parameters. "
                     f"Keep functions at or below {ctx.config.python_long_parameter_limit} parameters or group inputs into objects."
                 ),
-                metadata={"path": path_value, "function": name, "parameter_count": count},
+                metadata={
+                    "path": path_value,
+                    "function": name,
+                    "parameter_count": count,
+                },
             ),
         ]
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if not ctx.config.python_ast_enabled:
             return []
@@ -229,7 +241,11 @@ class PythonLongParameterRule(Rule):
             for path_value in ctx.candidate_paths:
                 if not path_value.lower().endswith((".py", ".pyi")):
                     continue
-                full_path = (ctx.config.root / path_value).resolve() if not Path(path_value).is_absolute() else Path(path_value)
+                full_path = (
+                    (ctx.config.root / path_value).resolve()
+                    if not Path(path_value).is_absolute()
+                    else Path(path_value)
+                )
                 try:
                     source = full_path.read_text(encoding="utf-8")
                 except OSError:
@@ -253,7 +269,9 @@ class PythonLongLineRule(Rule):
 
     # max line length read from config.python_max_line_length
 
-    def _check_source(self, source: str, path_value: str, ctx: HookContext) -> list[RuleFinding]:
+    def _check_source(
+        self, source: str, path_value: str, ctx: HookContext
+    ) -> list[RuleFinding]:
         max_length = ctx.config.python_max_line_length
         if len(source) > ctx.config.python_ast_max_parse_chars:
             return []
@@ -290,11 +308,14 @@ class PythonLongLineRule(Rule):
                     f"Line {worst_lineno} in `{path_value}` is {worst_length} characters long. "
                     f"Keep lines at or below {max_length} characters."
                 ),
-                metadata={"path": path_value, "line": worst_lineno, "length": worst_length},
+                metadata={
+                    "path": path_value,
+                    "line": worst_lineno,
+                    "length": worst_length,
+                },
             ),
         ]
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         return _evaluate_common(self, ctx, self._check_source)
 
@@ -309,8 +330,14 @@ class PythonDeepNestingRule(Rule):
 
     # max nesting read from config.python_max_nesting_depth
     _NESTING_TYPES = (
-        ast.If, ast.For, ast.While, ast.AsyncFor,
-        ast.With, ast.AsyncWith, ast.Try, ast.ExceptHandler,
+        ast.If,
+        ast.For,
+        ast.While,
+        ast.AsyncFor,
+        ast.With,
+        ast.AsyncWith,
+        ast.Try,
+        ast.ExceptHandler,
     )
 
     def _max_nesting(self, node: ast.AST, depth: int = 0) -> int:
@@ -323,7 +350,9 @@ class PythonDeepNestingRule(Rule):
                 max_d = max(max_d, self._max_nesting(child, depth))
         return max_d
 
-    def _check_source(self, source: str, path_value: str, ctx: HookContext) -> list[RuleFinding]:
+    def _check_source(
+        self, source: str, path_value: str, ctx: HookContext
+    ) -> list[RuleFinding]:
         module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
@@ -347,11 +376,14 @@ class PythonDeepNestingRule(Rule):
                     f"Function `{worst_name}` in `{path_value}` has nesting depth {worst_depth}. "
                     f"Keep nesting at or below {ctx.config.python_max_nesting_depth} levels."
                 ),
-                metadata={"path": path_value, "function": worst_name, "depth": worst_depth},
+                metadata={
+                    "path": path_value,
+                    "function": worst_name,
+                    "depth": worst_depth,
+                },
             ),
         ]
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         return _evaluate_common(self, ctx, self._check_source)
 
@@ -367,18 +399,74 @@ class PythonFeatureEnvyRule(Rule):
     # threshold read from config.python_feature_envy_threshold
     # min accesses read from config.python_feature_envy_min_accesses
     # Common stdlib/utility module names that look like objects but are not
-    _IGNORE_NAMES = frozenset({
-        "os", "sys", "re", "io", "abc", "ast", "csv", "json", "math", "time",
-        "uuid", "enum", "copy", "gzip", "html", "http", "shutil", "signal",
-        "socket", "string", "struct", "typing", "base64", "codecs",
-        "hashlib", "logging", "pathlib", "secrets", "sqlite3", "urllib",
-        "asyncio", "collections", "contextlib", "dataclasses", "datetime",
-        "functools", "importlib", "itertools", "multiprocessing", "operator",
-        "platform", "pprint", "random", "subprocess", "tempfile", "textwrap",
-        "threading", "traceback", "unittest", "warnings",
-        "np", "pd", "plt", "tf", "torch", "sk",  # common aliases
-        "Path", "Enum", "Optional", "Union", "List", "Dict", "Set", "Tuple",
-    })
+    _IGNORE_NAMES = frozenset(
+        {
+            "os",
+            "sys",
+            "re",
+            "io",
+            "abc",
+            "ast",
+            "csv",
+            "json",
+            "math",
+            "time",
+            "uuid",
+            "enum",
+            "copy",
+            "gzip",
+            "html",
+            "http",
+            "shutil",
+            "signal",
+            "socket",
+            "string",
+            "struct",
+            "typing",
+            "base64",
+            "codecs",
+            "hashlib",
+            "logging",
+            "pathlib",
+            "secrets",
+            "sqlite3",
+            "urllib",
+            "asyncio",
+            "collections",
+            "contextlib",
+            "dataclasses",
+            "datetime",
+            "functools",
+            "importlib",
+            "itertools",
+            "multiprocessing",
+            "operator",
+            "platform",
+            "pprint",
+            "random",
+            "subprocess",
+            "tempfile",
+            "textwrap",
+            "threading",
+            "traceback",
+            "unittest",
+            "warnings",
+            "np",
+            "pd",
+            "plt",
+            "tf",
+            "torch",
+            "sk",  # common aliases
+            "Path",
+            "Enum",
+            "Optional",
+            "Union",
+            "List",
+            "Dict",
+            "Set",
+            "Tuple",
+        }
+    )
 
     @staticmethod
     def _root_name(node: ast.Attribute) -> str | None:
@@ -391,10 +479,14 @@ class PythonFeatureEnvyRule(Rule):
         return None
 
     @staticmethod
-    def _param_names(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> frozenset[str]:
+    def _param_names(
+        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> frozenset[str]:
         """Collect all parameter names from a function signature."""
         names: list[str] = []
-        for arg in func_node.args.args + func_node.args.posonlyargs + func_node.args.kwonlyargs:
+        for arg in (
+            func_node.args.args + func_node.args.posonlyargs + func_node.args.kwonlyargs
+        ):
             names.append(arg.arg)
         if func_node.args.vararg:
             names.append(func_node.args.vararg.arg)
@@ -402,7 +494,9 @@ class PythonFeatureEnvyRule(Rule):
             names.append(func_node.args.kwarg.arg)
         return frozenset(names)
 
-    def _check_source(self, source: str, path_value: str, ctx: HookContext) -> list[RuleFinding]:
+    def _check_source(
+        self, source: str, path_value: str, ctx: HookContext
+    ) -> list[RuleFinding]:
         module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
@@ -416,7 +510,11 @@ class PythonFeatureEnvyRule(Rule):
             for child in ast.walk(node):
                 if isinstance(child, ast.Attribute):
                     root = self._root_name(child)
-                    if root is None or root in ("self", "cls") or root in self._IGNORE_NAMES:
+                    if (
+                        root is None
+                        or root in ("self", "cls")
+                        or root in self._IGNORE_NAMES
+                    ):
                         continue
                     if root in param_ns:
                         continue
@@ -449,7 +547,6 @@ class PythonFeatureEnvyRule(Rule):
                     break  # one finding per function
         return findings
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         return _evaluate_common(self, ctx, self._check_source)
 
@@ -462,7 +559,9 @@ class PythonThinWrapperRule(Rule):
     title = "Block thin wrappers"
     events = ("PreToolUse", "PermissionRequest", "PostToolUse")
 
-    def _check_source(self, source: str, path_value: str, ctx: HookContext) -> list[RuleFinding]:
+    def _check_source(
+        self, source: str, path_value: str, ctx: HookContext
+    ) -> list[RuleFinding]:
         module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
@@ -482,7 +581,9 @@ class PythonThinWrapperRule(Rule):
             stmt = node.body[0]
             # Return(Call(...)) or Expr(Call(...))
             call_node: ast.Call | None = None
-            if (isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Call)) or (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)):
+            if (isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Call)) or (
+                isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+            ):
                 call_node = stmt.value
             if call_node is None:
                 continue
@@ -504,12 +605,15 @@ class PythonThinWrapperRule(Rule):
                         f"Function `{node.name}` in `{path_value}` is a thin wrapper "
                         f"around `{wrapped}`. Consider calling the wrapped function directly."
                     ),
-                    metadata={"path": path_value, "function": node.name, "wraps": wrapped},
+                    metadata={
+                        "path": path_value,
+                        "function": node.name,
+                        "wraps": wrapped,
+                    },
                 ),
             )
         return findings
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         return _evaluate_common(self, ctx, self._check_source)
 
@@ -524,7 +628,9 @@ class PythonGodClassRule(Rule):
 
     # max methods read from config.python_max_god_class_methods
 
-    def _check_source(self, source: str, path_value: str, ctx: HookContext) -> list[RuleFinding]:
+    def _check_source(
+        self, source: str, path_value: str, ctx: HookContext
+    ) -> list[RuleFinding]:
         module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
@@ -548,12 +654,15 @@ class PythonGodClassRule(Rule):
                             f"Class `{node.name}` in `{path_value}` has {method_count} non-dunder methods. "
                             f"Keep classes at or below {ctx.config.python_max_god_class_methods} methods or split responsibilities."
                         ),
-                        metadata={"path": path_value, "class": node.name, "method_count": method_count},
+                        metadata={
+                            "path": path_value,
+                            "class": node.name,
+                            "method_count": method_count,
+                        },
                     ),
                 )
         return findings
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         return _evaluate_common(self, ctx, self._check_source)
 
@@ -573,7 +682,13 @@ class PythonCyclomaticComplexityRule(Rule):
         """Compute cyclomatic complexity for a function body."""
         complexity = 1
         for child in ast.walk(node):
-            if isinstance(child, (ast.If, ast.IfExp)) or isinstance(child, (ast.For, ast.AsyncFor, ast.While)) or isinstance(child, ast.ExceptHandler) or isinstance(child, (ast.With, ast.AsyncWith)) or isinstance(child, ast.Assert):
+            if (
+                isinstance(child, (ast.If, ast.IfExp))
+                or isinstance(child, (ast.For, ast.AsyncFor, ast.While))
+                or isinstance(child, ast.ExceptHandler)
+                or isinstance(child, (ast.With, ast.AsyncWith))
+                or isinstance(child, ast.Assert)
+            ):
                 complexity += 1
             elif isinstance(child, ast.BoolOp):
                 complexity += len(child.values) - 1
@@ -581,7 +696,9 @@ class PythonCyclomaticComplexityRule(Rule):
                 complexity += 1
         return complexity
 
-    def _check_source(self, source: str, path_value: str, ctx: HookContext) -> list[RuleFinding]:
+    def _check_source(
+        self, source: str, path_value: str, ctx: HookContext
+    ) -> list[RuleFinding]:
         module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
@@ -605,11 +722,14 @@ class PythonCyclomaticComplexityRule(Rule):
                     f"Function `{worst_name}` in `{path_value}` has cyclomatic complexity {worst_cc}. "
                     f"Keep complexity at or below {ctx.config.python_max_complexity}."
                 ),
-                metadata={"path": path_value, "function": worst_name, "complexity": worst_cc},
+                metadata={
+                    "path": path_value,
+                    "function": worst_name,
+                    "complexity": worst_cc,
+                },
             ),
         ]
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         return _evaluate_common(self, ctx, self._check_source)
 
@@ -639,7 +759,9 @@ class PythonDeadCodeRule(Rule):
             blocks: list[list[ast.stmt]] = []
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 blocks.append(child.body)
-            elif isinstance(child, ast.If) or isinstance(child, (ast.For, ast.AsyncFor, ast.While)):
+            elif isinstance(child, ast.If) or isinstance(
+                child, (ast.For, ast.AsyncFor, ast.While)
+            ):
                 blocks.append(child.body)
                 if child.orelse:
                     blocks.append(child.orelse)
@@ -651,7 +773,9 @@ class PythonDeadCodeRule(Rule):
                     blocks.append(child.orelse)
                 if child.finalbody:
                     blocks.append(child.finalbody)
-            elif isinstance(child, (ast.With, ast.AsyncWith)) or isinstance(child, ast.ExceptHandler):
+            elif isinstance(child, (ast.With, ast.AsyncWith)) or isinstance(
+                child, ast.ExceptHandler
+            ):
                 blocks.append(child.body)
             for block in blocks:
                 cause, lineno = self._scan_block(block)
@@ -659,7 +783,9 @@ class PythonDeadCodeRule(Rule):
                     results.append((cause, lineno))
         return results
 
-    def _check_source(self, source: str, path_value: str, ctx: HookContext) -> list[RuleFinding]:
+    def _check_source(
+        self, source: str, path_value: str, ctx: HookContext
+    ) -> list[RuleFinding]:
         module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
@@ -690,7 +816,6 @@ class PythonDeadCodeRule(Rule):
                 )
         return findings
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         return _evaluate_common(self, ctx, self._check_source)
 
@@ -716,6 +841,7 @@ class PythonFlatFileSiblingsRule(Rule):
     def _prefix_groups(directory: Path) -> dict[str, list[str]]:
         """Group _prefix_*.py files by their shared prefix."""
         import re as _re
+
         groups: dict[str, list[str]] = {}
         pat = _re.compile(r"^_([a-z]+)_[a-z_]+\.py$")
         for child in directory.iterdir():
@@ -726,9 +852,8 @@ class PythonFlatFileSiblingsRule(Rule):
                 groups.setdefault(m.group(1), []).append(child.name)
         return groups
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if ctx.event_name not in self.events:
             return []
@@ -797,9 +922,22 @@ class PythonFlatFileSiblingsRule(Rule):
 
 # Prefixes that signal a function family (parse_*, build_*, validate_*, …)
 _FAMILY_PREFIXES = (
-    "parse_", "build_", "create_", "make_", "get_", "set_",
-    "validate_", "check_", "format_", "render_", "load_", "save_",
-    "encode_", "decode_", "serialize_", "deserialize_",
+    "parse_",
+    "build_",
+    "create_",
+    "make_",
+    "get_",
+    "set_",
+    "validate_",
+    "check_",
+    "format_",
+    "render_",
+    "load_",
+    "save_",
+    "encode_",
+    "decode_",
+    "serialize_",
+    "deserialize_",
 )
 
 
@@ -897,6 +1035,5 @@ class PythonImportFanoutRule(Rule):
             )
         return findings
 
-    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         return _evaluate_common(self, ctx, self._check_source)

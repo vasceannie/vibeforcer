@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import json
+import importlib
 import os
 from pathlib import Path
 from typing import Any
 
-try:
-    import tomllib
-except ModuleNotFoundError:
+_TOML_PARSER = None
+for module_name in ("tomllib", "tomli"):
     try:
-        import tomli as tomllib  # type: ignore[no-redef]  # pyright: ignore[reportMissingImports]
+        _module = importlib.import_module(module_name)
     except ModuleNotFoundError:
-        tomllib = None  # type: ignore[assignment]
+        continue
+    if callable(getattr(_module, "loads", None)):
+        _TOML_PARSER = _module
+        break
 
 from vibeforcer.models import RegexRuleConfig, RuntimeConfig
+from vibeforcer.policy_defaults import RUNTIME_POLICY_DEFAULTS
 
 # Sentinel filenames that disable the quality gate for a repo.
 _DISABLE_SENTINELS = (".noqualitygate", ".no-quality-gate")
@@ -70,12 +74,21 @@ def resolve_config_path() -> Path:
             return legacy_path
 
     # Default legacy location
-    legacy_default = Path.home() / ".claude" / "hooks" / "enforcer" / ".claude" / "hook-layer" / "config.json"
+    legacy_default = (
+        Path.home()
+        / ".claude"
+        / "hooks"
+        / "enforcer"
+        / ".claude"
+        / "hook-layer"
+        / "config.json"
+    )
     if legacy_default.exists():
         return legacy_default
 
     # Bundled defaults
     from vibeforcer.resources import resource_path
+
     return resource_path("defaults.json")
 
 
@@ -104,13 +117,13 @@ def detect_root() -> Path:
 
 def _load_toml(root: Path) -> dict[str, Any]:
     """Load quality_gate.toml from project root if available."""
-    if tomllib is None:
+    if _TOML_PARSER is None:
         return {}
     for name in ("quality_gate.toml",):
         toml_path = root / name
         if toml_path.exists():
             try:
-                return tomllib.loads(toml_path.read_text(encoding="utf-8"))
+                return _TOML_PARSER.loads(toml_path.read_text(encoding="utf-8"))
             except Exception:
                 return {}
     return {}
@@ -147,6 +160,7 @@ def is_repo_disabled(repo_root: Path | None = None) -> bool:
 def is_path_skipped(repo_path: Path, skip_paths: list[str]) -> bool:
     """Check if *repo_path* matches any glob in the central skip_paths list."""
     import fnmatch
+
     resolved = str(repo_path.resolve())
     for pattern in skip_paths:
         if fnmatch.fnmatch(resolved, pattern):
@@ -185,7 +199,9 @@ def load_config(root: Path | None = None) -> RuntimeConfig:
     (trace_dir / "async").mkdir(parents=True, exist_ok=True)
 
     # Prompt context: resolve relative to config_path's parent or root
-    prompt_context_files: list[str] = [str(p) for p in raw.get("prompt_context_files", [])]
+    prompt_context_files: list[str] = [
+        str(p) for p in raw.get("prompt_context_files", [])
+    ]
 
     # Overlay thresholds from quality_gate.toml (per-repo)
     repo_root = Path.cwd().resolve()
@@ -203,7 +219,9 @@ def load_config(root: Path | None = None) -> RuntimeConfig:
             severity_overrides_map = {str(k): str(v) for k, v in raw_sev.items()}
 
     skip_paths = [str(p) for p in raw.get("skip_paths", [])]
-    skip_if_file_exists = [str(s) for s in raw.get("skip_if_file_exists", list(_DISABLE_SENTINELS))]
+    skip_if_file_exists = [
+        str(s) for s in raw.get("skip_if_file_exists", list(_DISABLE_SENTINELS))
+    ]
 
     return RuntimeConfig(
         root=actual_root,
@@ -214,11 +232,32 @@ def load_config(root: Path | None = None) -> RuntimeConfig:
         sensitive_path_patterns=list(raw.get("sensitive_path_patterns", [])),
         system_path_prefixes=list(raw.get("system_path_prefixes", [])),
         python_ast_enabled=bool(python_ast.get("enabled", True)),
-        python_ast_max_parse_chars=int(python_ast.get("max_parse_chars", 200000)),
-        python_long_method_lines=int(toml_thresholds.get("max_method_lines", python_ast.get("long_method_lines", 50))),
-        python_long_parameter_limit=int(toml_thresholds.get("max_params", python_ast.get("long_parameter_limit", 4))),
+        python_ast_max_parse_chars=int(
+            python_ast.get(
+                "max_parse_chars", RUNTIME_POLICY_DEFAULTS["max_parse_chars"]
+            )
+        ),
+        python_long_method_lines=int(
+            toml_thresholds.get(
+                "max_method_lines",
+                python_ast.get(
+                    "long_method_lines", RUNTIME_POLICY_DEFAULTS["long_method_lines"]
+                ),
+            )
+        ),
+        python_long_parameter_limit=int(
+            toml_thresholds.get(
+                "max_params",
+                python_ast.get(
+                    "long_parameter_limit",
+                    RUNTIME_POLICY_DEFAULTS["long_parameter_limit"],
+                ),
+            )
+        ),
         post_edit_quality_enabled=bool(post_edit_quality.get("enabled", False)),
-        post_edit_quality_block_on_failure=bool(post_edit_quality.get("block_on_failure", True)),
+        post_edit_quality_block_on_failure=bool(
+            post_edit_quality.get("block_on_failure", True)
+        ),
         post_edit_quality_commands={
             str(key): [str(item) for item in value]
             for key, value in post_edit_quality.get("commands_by_language", {}).items()
@@ -230,20 +269,50 @@ def load_config(root: Path | None = None) -> RuntimeConfig:
             for key, value in async_jobs.get("commands_by_language", {}).items()
             if isinstance(value, list)
         },
-        python_max_complexity=int(toml_thresholds.get("max_complexity", 10)),
-        python_max_nesting_depth=int(toml_thresholds.get("max_nesting_depth", 4)),
-        python_max_god_class_methods=int(toml_thresholds.get("max_god_class_methods", 10)),
-        python_max_line_length=int(toml_thresholds.get("max_line_length", 120)),
-        python_feature_envy_threshold=float(toml_thresholds.get("feature_envy_threshold", 0.60)),
-        python_feature_envy_min_accesses=int(toml_thresholds.get("feature_envy_min_accesses", 6)),
-        python_import_fanout_limit=int(toml_thresholds.get("import_fanout_limit", 5)),
+        python_max_complexity=int(
+            toml_thresholds.get(
+                "max_complexity", RUNTIME_POLICY_DEFAULTS["max_complexity"]
+            )
+        ),
+        python_max_nesting_depth=int(
+            toml_thresholds.get(
+                "max_nesting_depth", RUNTIME_POLICY_DEFAULTS["max_nesting_depth"]
+            )
+        ),
+        python_max_god_class_methods=int(
+            toml_thresholds.get(
+                "max_god_class_methods",
+                RUNTIME_POLICY_DEFAULTS["max_god_class_methods"],
+            )
+        ),
+        python_max_line_length=int(
+            toml_thresholds.get(
+                "max_line_length", RUNTIME_POLICY_DEFAULTS["max_line_length"]
+            )
+        ),
+        python_feature_envy_threshold=float(
+            toml_thresholds.get(
+                "feature_envy_threshold",
+                RUNTIME_POLICY_DEFAULTS["feature_envy_threshold"],
+            )
+        ),
+        python_feature_envy_min_accesses=int(
+            toml_thresholds.get(
+                "feature_envy_min_accesses",
+                RUNTIME_POLICY_DEFAULTS["feature_envy_min_accesses"],
+            )
+        ),
+        python_import_fanout_limit=int(
+            toml_thresholds.get(
+                "import_fanout_limit", RUNTIME_POLICY_DEFAULTS["import_fanout_limit"]
+            )
+        ),
         skip_paths=skip_paths,
         skip_if_file_exists=skip_if_file_exists,
         disabled_rules=disabled_rules_list,
         severity_overrides=severity_overrides_map,
         enabled_rules={
-            str(key): bool(value)
-            for key, value in raw.get("enabled_rules", {}).items()
+            str(key): bool(value) for key, value in raw.get("enabled_rules", {}).items()
         },
         regex_rules=regex_rules,
     )

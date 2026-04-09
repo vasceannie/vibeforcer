@@ -3,16 +3,14 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from vibeforcer.models import RuleFinding, Severity
-from vibeforcer.rules.base import Rule
+from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import path_matches_glob
 
-
-def _is_rule_enabled(ctx: Any, rule_id: str, default: bool = True) -> bool:
-    value = ctx.config.enabled_rules.get(rule_id)
-    return default if value is None else bool(value)
+if TYPE_CHECKING:
+    from vibeforcer.context import HookContext
 
 
 class BaselineGuardRule(Rule):
@@ -29,15 +27,13 @@ class BaselineGuardRule(Rule):
     _BASELINE_GLOBS = ("baselines.json", "**/baselines.json")
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
 
         for target in ctx.content_targets:
             if not target.path:
                 continue
-            if not any(
-                path_matches_glob(target.path, g) for g in self._BASELINE_GLOBS
-            ):
+            if not any(path_matches_glob(target.path, g) for g in self._BASELINE_GLOBS):
                 continue
 
             return self._check_baseline_change(target.path, target.content, ctx)
@@ -62,7 +58,7 @@ class BaselineGuardRule(Rule):
 
         return []
 
-    def _resolve_existing_path(self, path_str: str, ctx: Any) -> Path | None:
+    def _resolve_existing_path(self, path_str: str, ctx: HookContext) -> Path | None:
         """Find the existing baselines.json on disk."""
         p = Path(path_str)
         if p.is_absolute() and p.exists():
@@ -87,7 +83,7 @@ class BaselineGuardRule(Rule):
         self,
         path_str: str,
         new_content: str,
-        ctx: Any,
+        ctx: HookContext,
     ) -> list[RuleFinding]:
         try:
             new_data = json.loads(new_content)

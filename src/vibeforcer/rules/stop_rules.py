@@ -3,10 +3,10 @@ from __future__ import annotations
 import json as _json
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from vibeforcer.models import RuleFinding, Severity
-from vibeforcer.rules.base import Rule
+from vibeforcer.rules.base import Rule, is_rule_enabled
 
 if TYPE_CHECKING:
     from vibeforcer.context import HookContext
@@ -26,8 +26,16 @@ def _is_worktree(path_str: str) -> bool:
         p = Path(path_str).resolve()
         # Walk up to find the git toplevel
         result = subprocess.run(
-            ["git", "-C", str(p) if p.is_dir() else str(p.parent), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=3,
+            [
+                "git",
+                "-C",
+                str(p) if p.is_dir() else str(p.parent),
+                "rev-parse",
+                "--show-toplevel",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
         if result.returncode != 0:
             return False
@@ -54,11 +62,18 @@ def _extract_content_text(msg: object) -> str:
     if isinstance(msg, str):
         return msg
     if isinstance(msg, list):
-        return " ".join(
-            block.get("text", "")
-            for block in msg
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
+        extracted: list[str] = []
+        for block in msg:
+            if not isinstance(block, dict):
+                continue
+            typed_block = cast(dict[str, object], block)
+            raw_type = typed_block.get("type")
+            if not isinstance(raw_type, str) or raw_type != "text":
+                continue
+            raw_text = typed_block.get("text")
+            if isinstance(raw_text, str):
+                extracted.append(raw_text)
+        return " ".join(extracted)
     return ""
 
 
@@ -76,10 +91,16 @@ def _last_assistant_response(transcript_path: str) -> str:
             entry = _json.loads(line)
         except _json.JSONDecodeError:
             continue
-        role = entry.get("type") or entry.get("role")
-        if role == "assistant":
-            msg = entry.get("message", {}).get("content", "")
-            return _extract_content_text(msg)
+        if not isinstance(entry, dict):
+            continue
+        raw_role = entry.get("type") or entry.get("role")
+        if not isinstance(raw_role, str) or raw_role != "assistant":
+            continue
+        msg_container = entry.get("message")
+        if not isinstance(msg_container, dict):
+            continue
+        msg = msg_container.get("content", "")
+        return _extract_content_text(msg)
     return ""
 
 
@@ -115,8 +136,7 @@ class IgnorePreexistingRule(Rule):
     events = ("Stop", "SubagentStop")
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        enabled = ctx.config.enabled_rules.get(self.rule_id)
-        if enabled is not None and not enabled:
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         response = _get_stop_response(ctx)
         if not response:
@@ -142,26 +162,21 @@ class IgnorePreexistingRule(Rule):
 
 
 _QUALITY_REMINDER = (
-    "Before stopping: verify all tests pass and quality "
-    "gates are clean. Run `make quality` or the "
-    "project-specific quality command if available."
+    "Before stopping, verify tests pass and quality gates are clean. "
+    "Run `vibeforcer lint check` (or your project-specific quality "
+    "command) before finishing this task."
 )
-
-
-def _is_rule_on(ctx: HookContext, rule_id: str) -> bool:
-    enabled = ctx.config.enabled_rules.get(rule_id)
-    return enabled is None or bool(enabled)
 
 
 class RequireMakeQualityRule(Rule):
     """Remind to run quality gate before stopping."""
 
     rule_id = "STOP-002"
-    title = "Require make quality reminder"
+    title = "Require quality check reminder"
     events = ("Stop", "SubagentStop")
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         return [
             RuleFinding(
@@ -182,7 +197,7 @@ class WarnLargeFileRule(Rule):
     MAX_CHARS = 50_000
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         findings: list[RuleFinding] = []
         for target in ctx.content_targets:
@@ -211,8 +226,10 @@ class WarnLargeFileRule(Rule):
 _READ_TOOLS = frozenset({"read", "grep", "glob"})
 
 _INFRA_FRAGMENTS = (
-    "hook-layer/config.json", "hook_layer/",
-    "vibeforcer/", ".claude/hooks/",
+    "hook-layer/config.json",
+    "hook_layer/",
+    "vibeforcer/",
+    ".claude/hooks/",
 )
 
 _CONFIG_FRAGMENTS = (
@@ -226,6 +243,7 @@ def _is_safe_bash_for_path(ctx: HookContext) -> bool:
     if not ctx.tool_name or ctx.tool_name.lower() != "bash":
         return False
     from vibeforcer.rules.common import _is_safe_read_shell
+
     return _is_safe_read_shell(ctx.bash_command.lower())
 
 
@@ -234,6 +252,7 @@ def _is_modifying_tool(ctx: HookContext) -> bool:
     if ctx.tool_name and ctx.tool_name.lower() == "bash":
         return True
     from vibeforcer.util.payloads import is_edit_like_tool
+
     return is_edit_like_tool(ctx.tool_name)
 
 
@@ -291,7 +310,7 @@ class HookInfraExecProtectionRule(Rule):
     events = ("PreToolUse", "PermissionRequest")
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if ctx.tool_name and ctx.tool_name.lower() in _READ_TOOLS:
             return []
@@ -323,8 +342,12 @@ _SECURITY_PATTERNS = tuple(
 )
 
 _SECURITY_EXCLUDED = (
-    "hook_layer/", "vibeforcer/", "hook-layer/",
-    ".claude/hooks/", "test_", "fixture",
+    "hook_layer/",
+    "vibeforcer/",
+    "hook-layer/",
+    ".claude/hooks/",
+    "test_",
+    "fixture",
 )
 
 
@@ -336,7 +359,7 @@ class RulebookSecurityRule(Rule):
     events = ("PreToolUse", "PermissionRequest")
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         for target in ctx.content_targets:
             lowered = target.path.lower()
@@ -370,12 +393,9 @@ class RulebookSecurityRule(Rule):
 # ---------------------------------------------------------------------------
 
 _GIT_COMMANDS: list[tuple[list[str], str]] = [
-    (["git", "log", "--oneline", "-10"],
-     "## Recent commits\n```\n{output}\n```"),
-    (["git", "status", "--short"],
-     "## Working tree status\n```\n{output}\n```"),
-    (["git", "branch", "--show-current"],
-     "Current branch: `{output}`"),
+    (["git", "log", "--oneline", "-10"], "## Recent commits\n```\n{output}\n```"),
+    (["git", "status", "--short"], "## Working tree status\n```\n{output}\n```"),
+    (["git", "branch", "--show-current"], "Current branch: `{output}`"),
 ]
 
 
@@ -385,8 +405,11 @@ def _collect_git_context(cwd: str) -> list[str]:
     for cmd, template in _GIT_COMMANDS:
         try:
             result = subprocess.run(
-                cmd, cwd=cwd,
-                capture_output=True, text=True, timeout=5,
+                cmd,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
         except (OSError, subprocess.TimeoutExpired):
             continue
@@ -404,7 +427,7 @@ class SessionStartContextRule(Rule):
     events = ("SessionStart",)
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         fragments = _collect_git_context(str(ctx.cwd))
         if not fragments:
@@ -415,8 +438,7 @@ class SessionStartContextRule(Rule):
                 title=self.title,
                 severity=Severity.LOW,
                 additional_context=(
-                    "# Project Context (auto-injected)\n\n"
-                    + "\n\n".join(fragments)
+                    "# Project Context (auto-injected)\n\n" + "\n\n".join(fragments)
                 ),
             )
         ]
@@ -427,7 +449,9 @@ class SessionStartContextRule(Rule):
 # ---------------------------------------------------------------------------
 
 _CONFIG_BLOCKED_SOURCES = (
-    "project_settings", "local_settings", "user_settings",
+    "project_settings",
+    "local_settings",
+    "user_settings",
 )
 
 
@@ -439,7 +463,7 @@ class ConfigChangeGuardRule(Rule):
     events = ("ConfigChange",)
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         source = ctx.payload.payload.get("source", "")
         if source not in _CONFIG_BLOCKED_SOURCES:

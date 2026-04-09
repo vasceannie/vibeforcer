@@ -4,6 +4,7 @@ All rules are advisory (additionalContext only, never decision:block)
 because PostToolUse cannot prevent the edit — it already happened.
 These nudge Claude toward LangGraph best practices without halting.
 """
+
 from __future__ import annotations
 
 import ast
@@ -13,16 +14,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vibeforcer.models import RuleFinding, Severity
-from vibeforcer.rules.base import Rule
+from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import is_edit_like_tool, is_bash_tool
 
 if TYPE_CHECKING:
     from vibeforcer.context import HookContext
-
-
-def _is_enabled(ctx: HookContext, rule_id: str, default: bool = True) -> bool:
-    value = ctx.config.enabled_rules.get(rule_id)
-    return default if value is None else bool(value)
 
 
 _DEPENDENCY_FILES = (
@@ -202,7 +198,7 @@ class LangGraphStateReducerRule(Rule):
     events = ("PostToolUse",)
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
+        if not is_rule_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
             return []
         findings: list[RuleFinding] = []
         for path_value, source in _iter_langgraph_sources(ctx):
@@ -217,14 +213,14 @@ class LangGraphStateReducerRule(Rule):
 # Compiled once at import time — patterns that indicate direct state mutation.
 # These are regex *definitions*, not actual state mutation code.
 _STATE_MUTATION_PATTERNS = [
-    re.compile(r'\bstate\s*\[.+\]\s*='),
-    re.compile(r'\bstate\s*\[.+\]\.append\b'),
-    re.compile(r'\bstate\s*\[.+\]\.extend\b'),
-    re.compile(r'\bstate\s*\[.+\]\.update\b'),
-    re.compile(r'\bstate\.update\s*\('),
-    re.compile(r'\bstate\s*\[.+\]\.pop\b'),
-    re.compile(r'\bstate\s*\[.+\]\.clear\b'),
-    re.compile(r'\bstate\s*\[.+\]\s*\+='),
+    re.compile(r"\bstate\s*\[.+\]\s*="),
+    re.compile(r"\bstate\s*\[.+\]\.append\b"),
+    re.compile(r"\bstate\s*\[.+\]\.extend\b"),
+    re.compile(r"\bstate\s*\[.+\]\.update\b"),
+    re.compile(r"\bstate\.update\s*\("),
+    re.compile(r"\bstate\s*\[.+\]\.pop\b"),
+    re.compile(r"\bstate\s*\[.+\]\.clear\b"),
+    re.compile(r"\bstate\s*\[.+\]\s*\+="),
 ]
 
 
@@ -257,7 +253,7 @@ def _mutation_finding(
         additional_context=(
             f"Possible direct state mutation in `{path_value}`: "
             f"{example_str}. LangGraph nodes should return partial "
-            f"state updates (e.g., return {{\"field\": new_value}}) "
+            f'state updates (e.g., return {{"field": new_value}}) '
             f"instead of mutating state directly. Direct mutation can "
             f"cause checkpoint corruption and non-deterministic behavior."
         ),
@@ -277,7 +273,7 @@ class LangGraphStateMutationRule(Rule):
     events = ("PostToolUse",)
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
+        if not is_rule_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
             return []
         findings: list[RuleFinding] = []
         for path_value, source in _iter_langgraph_sources(ctx):
@@ -293,12 +289,12 @@ class LangGraphStateMutationRule(Rule):
 
 _DEPRECATED_APIS = [
     (
-        re.compile(r'\.set_entry_point\s*\('),
+        re.compile(r"\.set_entry_point\s*\("),
         "set_entry_point()",
         'add_edge(START, "node")',
     ),
     (
-        re.compile(r'\.set_finish_point\s*\('),
+        re.compile(r"\.set_finish_point\s*\("),
         "set_finish_point()",
         'add_edge("node", END)',
     ),
@@ -313,7 +309,7 @@ class LangGraphDeprecatedAPIRule(Rule):
     events = ("PostToolUse",)
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
+        if not is_rule_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
             return []
         findings: list[RuleFinding] = []
         for path_value, source in _iter_langgraph_sources(ctx):

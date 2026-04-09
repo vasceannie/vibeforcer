@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Any
 
 from vibeforcer.constants import SAFE_READ_SHELL_VERBS
 from vibeforcer.models import RuleFinding, Severity
-from vibeforcer.rules.base import Rule
+from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import lower_path, path_matches_glob
 from vibeforcer.util.subprocesses import run_shell
 
-
-def _is_rule_enabled(ctx: "HookContext", rule_id: str, default: bool = True) -> bool:
-    value = ctx.config.enabled_rules.get(rule_id)
-    return default if value is None else bool(value)
-
+if TYPE_CHECKING:
+    from vibeforcer.context import HookContext
 
 
 def _command_has_word(command: str, word: str) -> bool:
@@ -44,7 +42,7 @@ class PromptContextRule(Rule):
     events = ("UserPromptSubmit",)
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         fragments: list[str] = []
         for relative in ctx.config.prompt_context_files:
@@ -100,7 +98,7 @@ class FullFileReadRule(Rule):
     LARGE_FILE_BYTES = 40_000
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if ctx.tool_name != "Read":
             return []
@@ -135,13 +133,14 @@ class ProtectedPathsRule(Rule):
     events = ("PreToolUse", "PermissionRequest")
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         patterns = ctx.config.protected_paths
         if not patterns:
             return []
         # Read-only tools should never be blocked by protected paths
         from vibeforcer.constants import READ_TOOL_NAMES
+
         if ctx.tool_name and ctx.tool_name.lower() in READ_TOOL_NAMES:
             return []
 
@@ -207,8 +206,13 @@ class SensitiveDataRule(Rule):
     events = ("PreToolUse", "PermissionRequest")
 
     SAFE_SUFFIXES = (
-        ".example", ".sample", ".template",
-        ".defaults", ".dist", ".test", ".bak",
+        ".example",
+        ".sample",
+        ".template",
+        ".defaults",
+        ".dist",
+        ".test",
+        ".bak",
     )
 
     def _is_safe_path(self, path_value: str) -> bool:
@@ -240,7 +244,7 @@ class SensitiveDataRule(Rule):
         _WORD_BREAKS = frozenset(" \t\n;|&><")
         for pattern in compiled:
             for m in pattern.finditer(lowered):
-                rest = lowered[m.end():]
+                rest = lowered[m.end() :]
                 end = next(
                     (i for i, ch in enumerate(rest) if ch in _WORD_BREAKS),
                     len(rest),
@@ -255,7 +259,7 @@ class SensitiveDataRule(Rule):
         return None
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         compiled = _compile_sensitive_patterns(
             ctx.config.sensitive_path_patterns,
@@ -308,7 +312,7 @@ class SystemProtectionRule(Rule):
     events = ("PreToolUse", "PermissionRequest")
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         prefixes = [i.lower() for i in ctx.config.system_path_prefixes]
         if not prefixes:
@@ -324,9 +328,7 @@ class SystemProtectionRule(Rule):
                 title=self.title,
                 severity=Severity.CRITICAL,
                 decision="deny",
-                message=(
-                    f"Critical system path access is blocked: {matched}"
-                ),
+                message=(f"Critical system path access is blocked: {matched}"),
                 metadata={"target": matched},
             )
         ]
@@ -352,7 +354,7 @@ class GitNoVerifyRule(Rule):
     events = ("PreToolUse", "PermissionRequest")
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if not ctx.bash_command:
             return []
@@ -460,7 +462,7 @@ class PostEditQualityRule(Rule):
     events = ("PostToolUse",)
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if not ctx.config.post_edit_quality_enabled or not ctx.languages:
             return []

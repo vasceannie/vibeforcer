@@ -4,6 +4,7 @@ All shared fixtures (evaluate, load_fixture, pretool_write, pretool_bash,
 bundle_root, tmp_project) and assertion helpers (assert_denied_by,
 assert_blocked, assert_not_denied, finding_ids) live in conftest.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -97,6 +98,7 @@ class TestMultiRuleDenyFixtures:
 # PreToolUse: inline payload deny tests
 # ===========================================================================
 
+
 class TestInlinePayloadDenies:
     def test_git_n_shorthand(self, pretool_bash):
         result = evaluate_payload(pretool_bash('git commit -n -m "skip"'))
@@ -127,26 +129,36 @@ class TestInlinePayloadDenies:
         assert_denied_by(result, "BUILTIN-PROTECTED-PATHS")
 
     def test_security_bypass_permissions(self, pretool_write):
-        result = evaluate_payload(pretool_write("src/settings.py", "BYPASS_PERMISSIONS = True\n"))
+        result = evaluate_payload(
+            pretool_write("src/settings.py", "BYPASS_PERMISSIONS = True\n")
+        )
         assert_denied_by(result, "BUILTIN-RULEBOOK-SECURITY", "bypass")
 
     def test_patch_with_any(self, bundle_root):
         payload = {
-            "session_id": "t", "cwd": str(bundle_root),
-            "hook_event_name": "PreToolUse", "tool_name": "Patch",
-            "tool_input": {"patch": "*** Update File: src/example.py\n+from typing import Any\n"},
+            "session_id": "t",
+            "cwd": str(bundle_root),
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Patch",
+            "tool_input": {
+                "patch": "*** Update File: src/example.py\n+from typing import Any\n"
+            },
         }
         result = evaluate_payload(payload)
         assert_denied_by(result, "PY-TYPE-001")
 
     def test_multiedit_second_edit_caught(self, bundle_root):
         payload = {
-            "session_id": "t", "cwd": str(bundle_root),
-            "hook_event_name": "PreToolUse", "tool_name": "MultiEdit",
-            "tool_input": {"edits": [
-                {"file_path": "src/a.py", "new_string": "x: int = 1"},
-                {"file_path": "src/b.py", "new_string": "from typing import Any"},
-            ]},
+            "session_id": "t",
+            "cwd": str(bundle_root),
+            "hook_event_name": "PreToolUse",
+            "tool_name": "MultiEdit",
+            "tool_input": {
+                "edits": [
+                    {"file_path": "src/a.py", "new_string": "x: int = 1"},
+                    {"file_path": "src/b.py", "new_string": "from typing import Any"},
+                ]
+            },
         }
         result = evaluate_payload(payload)
         assert_denied_by(result, "PY-TYPE-001", "Any")
@@ -155,6 +167,7 @@ class TestInlinePayloadDenies:
 # ===========================================================================
 # PreToolUse: negative tests (must NOT deny)
 # ===========================================================================
+
 
 @pytest.mark.parametrize(
     "file_path, content, forbidden_rule",
@@ -214,13 +227,17 @@ def test_bash_not_denied(pretool_bash, evaluate, command, forbidden_rule):
         assert_not_denied(result)
     else:
         ids = finding_ids(result)
-        assert forbidden_rule not in ids, f"{forbidden_rule} should not fire for: {command}"
+        assert forbidden_rule not in ids, (
+            f"{forbidden_rule} should not fire for: {command}"
+        )
 
 
 def test_read_hook_file_allowed(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
-        "hook_event_name": "PreToolUse", "tool_name": "Read",
+        "session_id": "t",
+        "cwd": str(bundle_root),
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Read",
         "tool_input": {"file_path": ".claude/hooks/run-pretool.sh"},
     }
     result = evaluate_payload(payload)
@@ -228,16 +245,19 @@ def test_read_hook_file_allowed(bundle_root):
 
 
 def test_two_asserts_below_threshold(pretool_write):
-    result = evaluate_payload(pretool_write(
-        "tests/test_safe.py",
-        "def test_ok():\n    assert x == 1\n    assert y == 2\n",
-    ))
+    result = evaluate_payload(
+        pretool_write(
+            "tests/test_safe.py",
+            "def test_ok():\n    assert x == 1\n    assert y == 2\n",
+        )
+    )
     assert "PY-TEST-001" not in finding_ids(result), "2 asserts below threshold"
 
 
 # ===========================================================================
 # Edge cases and boundary tests
 # ===========================================================================
+
 
 class TestEdgeCases:
     """Verify rules don't over-match on similar-looking but valid code."""
@@ -282,11 +302,13 @@ class TestEdgeCases:
 
     def test_any_builtin_not_denied(self, pretool_write):
         """Python's builtin any() must not trigger PY-TYPE-001."""
-        result = evaluate_payload(pretool_write(
-            "src/check.py",
-            "def has_errors(items: list[str]) -> bool:\n"
-            "    return any(item.startswith('ERROR') for item in items)\n",
-        ))
+        result = evaluate_payload(
+            pretool_write(
+                "src/check.py",
+                "def has_errors(items: list[str]) -> bool:\n"
+                "    return any(item.startswith('ERROR') for item in items)\n",
+            )
+        )
         assert "PY-TYPE-001" not in finding_ids(result)
 
     def test_normal_git_commit_allowed(self, pretool_bash):
@@ -323,7 +345,9 @@ class TestEdgeCases:
             ),
         ],
     )
-    def test_non_python_not_denied_by_python_rules(self, pretool_write, file_path, content):
+    def test_non_python_not_denied_by_python_rules(
+        self, pretool_write, file_path, content
+    ):
         result = evaluate_payload(pretool_write(file_path, content))
         py_rules = {r for r in finding_ids(result) if r.startswith("PY-")}
         assert not py_rules, f"Non-Python file should not trigger: {py_rules}"
@@ -333,39 +357,52 @@ class TestEdgeCases:
 # BASELINE-001: increase vs decrease
 # ===========================================================================
 
+
 class TestBaselineGuard:
     def _write_baseline(self, tmp_path: Path, rules: dict) -> Path:
         p = tmp_path / "baselines.json"
-        p.write_text(json.dumps({
-            "generated_at": "2026-01-01", "rules": rules, "schema_version": 1
-        }))
+        p.write_text(
+            json.dumps(
+                {"generated_at": "2026-01-01", "rules": rules, "schema_version": 1}
+            )
+        )
         return p
 
     def test_increase_blocked(self, tmp_path):
         existing = self._write_baseline(tmp_path, {"high-complexity": ["h1", "h2"]})
-        new_content = json.dumps({
-            "generated_at": "2026-01-02",
-            "rules": {"high-complexity": ["h1", "h2", "h3", "h4"]},
-            "schema_version": 1,
-        })
+        new_content = json.dumps(
+            {
+                "generated_at": "2026-01-02",
+                "rules": {"high-complexity": ["h1", "h2", "h3", "h4"]},
+                "schema_version": 1,
+            }
+        )
         payload = {
-            "session_id": "t", "cwd": str(tmp_path),
-            "hook_event_name": "PreToolUse", "tool_name": "Write",
+            "session_id": "t",
+            "cwd": str(tmp_path),
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
             "tool_input": {"file_path": str(existing), "content": new_content},
         }
         result = evaluate_payload(payload)
         assert_denied_by(result, "BASELINE-001", "inflation")
 
     def test_decrease_allowed(self, tmp_path):
-        existing = self._write_baseline(tmp_path, {"high-complexity": ["h1", "h2", "h3"]})
-        new_content = json.dumps({
-            "generated_at": "2026-01-02",
-            "rules": {"high-complexity": ["h1"]},
-            "schema_version": 1,
-        })
+        existing = self._write_baseline(
+            tmp_path, {"high-complexity": ["h1", "h2", "h3"]}
+        )
+        new_content = json.dumps(
+            {
+                "generated_at": "2026-01-02",
+                "rules": {"high-complexity": ["h1"]},
+                "schema_version": 1,
+            }
+        )
         payload = {
-            "session_id": "t", "cwd": str(tmp_path),
-            "hook_event_name": "PreToolUse", "tool_name": "Write",
+            "session_id": "t",
+            "cwd": str(tmp_path),
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
             "tool_input": {"file_path": str(existing), "content": new_content},
         }
         result = evaluate_payload(payload)
@@ -376,11 +413,14 @@ class TestBaselineGuard:
 # PermissionRequest event
 # ===========================================================================
 
+
 def test_permission_request_denies_makefile(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
+        "session_id": "t",
+        "cwd": str(bundle_root),
         "hook_event_name": "PermissionRequest",
-        "tool_name": "Write", "tool_input": {"file_path": "Makefile", "content": "all:\n\techo hi\n"},
+        "tool_name": "Write",
+        "tool_input": {"file_path": "Makefile", "content": "all:\n\techo hi\n"},
     }
     result = evaluate_payload(payload)
     assert result.output is not None
@@ -393,9 +433,11 @@ def test_permission_request_denies_makefile(bundle_root):
 # UserPromptSubmit
 # ===========================================================================
 
+
 def test_prompt_injects_context(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
+        "session_id": "t",
+        "cwd": str(bundle_root),
         "hook_event_name": "UserPromptSubmit",
         "prompt": "refactor the auth module",
     }
@@ -412,13 +454,16 @@ def test_prompt_injects_context(bundle_root):
 # PostToolUse (AST rules)
 # ===========================================================================
 
+
 def test_long_param_list_blocks(tmp_project):
     target = tmp_project / "src" / "sample.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("def build(a, b, c, d, e):\n    return a + b + c + d + e\n")
     payload = {
-        "session_id": "t", "cwd": str(tmp_project),
-        "hook_event_name": "PostToolUse", "tool_name": "Write",
+        "session_id": "t",
+        "cwd": str(tmp_project),
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
         "tool_input": {"file_path": "src/sample.py", "content": target.read_text()},
         "tool_response": {"filePath": "src/sample.py", "success": True},
     }
@@ -432,6 +477,7 @@ def test_long_param_list_blocks(tmp_project):
 # Stop / SubagentStop
 # ===========================================================================
 
+
 def test_stop_preexisting_blocked(load_fixture):
     result = evaluate_payload(load_fixture("stop_preexisting.json"))
     assert_blocked(result, "STOP-001")
@@ -439,7 +485,8 @@ def test_stop_preexisting_blocked(load_fixture):
 
 def test_subagent_stop_preexisting_blocked(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
+        "session_id": "t",
+        "cwd": str(bundle_root),
         "hook_event_name": "SubagentStop",
         "stop_response": "The type error was already existed before my changes.",
     }
@@ -449,7 +496,8 @@ def test_subagent_stop_preexisting_blocked(bundle_root):
 
 def test_clean_stop_gets_quality_reminder(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
+        "session_id": "t",
+        "cwd": str(bundle_root),
         "hook_event_name": "Stop",
         "stop_response": "All tasks completed successfully.",
     }
@@ -465,9 +513,11 @@ def test_clean_stop_gets_quality_reminder(bundle_root):
 
 def test_git_commit_gets_quality_context(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
+        "session_id": "t",
+        "cwd": str(bundle_root),
         "hook_event_name": "PreToolUse",
-        "tool_name": "Bash", "tool_input": {"command": "git commit -m 'fix: something'"},
+        "tool_name": "Bash",
+        "tool_input": {"command": "git commit -m 'fix: something'"},
     }
     result = evaluate_payload(payload)
     assert result.output is not None
@@ -483,18 +533,49 @@ def test_git_commit_gets_quality_context(bundle_root):
 # SessionStart
 # ===========================================================================
 
+
 def _init_git_worktree(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     worktree = tmp_path / "repo-worktree"
     repo.mkdir()
 
-    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
     (repo / "README.md").write_text("root\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "add", "README.md"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     subprocess.run(
         ["git", "worktree", "add", "-b", "feature/worktree-support", str(worktree)],
         cwd=repo,
@@ -508,12 +589,38 @@ def _init_git_worktree(tmp_path: Path) -> tuple[Path, Path]:
 def test_sessionstart_injects_git_context(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "t@t.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     (repo / "f.txt").write_text("hi\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "add", "."], cwd=repo, check=True, capture_output=True, text=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     payload = {"session_id": "s", "cwd": str(repo), "hook_event_name": "SessionStart"}
     result = evaluate_payload(payload)
     assert result.output is not None
@@ -545,6 +652,7 @@ def test_sessionstart_injects_git_context_from_worktree(tmp_path):
 # ConfigChange
 # ===========================================================================
 
+
 def test_disable_all_hooks_blocked(load_fixture):
     result = evaluate_payload(load_fixture("configchange_disable_hooks.json"))
     assert_blocked(result, "CONFIG-001")
@@ -552,9 +660,11 @@ def test_disable_all_hooks_blocked(load_fixture):
 
 def test_hook_modification_blocked(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
+        "session_id": "t",
+        "cwd": str(bundle_root),
         "hook_event_name": "ConfigChange",
-        "source": "user_settings", "changes": {"hooks": {"PreToolUse": []}},
+        "source": "user_settings",
+        "changes": {"hooks": {"PreToolUse": []}},
     }
     result = evaluate_payload(payload)
     assert_blocked(result, "CONFIG-001")
@@ -569,6 +679,7 @@ def test_policy_settings_allowed(load_fixture):
 # ===========================================================================
 # WarnLargeFile
 # ===========================================================================
+
 
 def test_large_file_warns(pretool_write):
     result = evaluate_payload(pretool_write("src/giant.py", "x = 1\n" * 60000))
@@ -586,6 +697,7 @@ def test_small_file_no_warn(pretool_write):
 # ===========================================================================
 # Disabled rules
 # ===========================================================================
+
 
 @pytest.mark.parametrize(
     "fixture_name, rule_id",
@@ -621,6 +733,7 @@ def test_disabled_rule_does_not_fire(load_fixture, fixture_name, rule_id):
 # Robustness
 # ===========================================================================
 
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -630,8 +743,12 @@ def test_disabled_rule_does_not_fire(load_fixture, fixture_name, rule_id):
             id="missing-tool-input",
         ),
         pytest.param(
-            {"session_id": "t", "hook_event_name": "FutureEvent",
-             "tool_name": "Write", "tool_input": {"file_path": "x.py", "content": "x"}},
+            {
+                "session_id": "t",
+                "hook_event_name": "FutureEvent",
+                "tool_name": "Write",
+                "tool_input": {"file_path": "x.py", "content": "x"},
+            },
             id="unknown-event",
         ),
     ],
@@ -646,13 +763,22 @@ def test_robustness_no_crash(payload):
 # ===========================================================================
 
 VALID_TOP_LEVEL_KEYS = {
-    "decision", "reason", "hookSpecificOutput",
-    "continue", "stopReason", "suppressOutput", "systemMessage",
+    "decision",
+    "reason",
+    "hookSpecificOutput",
+    "continue",
+    "stopReason",
+    "suppressOutput",
+    "systemMessage",
 }
 
 EVENTS_NO_HOOK_SPECIFIC = (
-    "Stop", "SubagentStop", "ConfigChange",
-    "PostToolUseFailure", "TaskCompleted", "TeammateIdle",
+    "Stop",
+    "SubagentStop",
+    "ConfigChange",
+    "PostToolUseFailure",
+    "TaskCompleted",
+    "TeammateIdle",
 )
 
 
@@ -662,13 +788,20 @@ EVENTS_NO_HOOK_SPECIFIC = (
         ("Stop", {"stop_response": "done"}),
         ("SubagentStop", {"stop_response": "done"}),
         ("ConfigChange", {"source": "user_settings", "changes": {}}),
-        ("PostToolUseFailure", {"tool_name": "Bash", "tool_input": {"command": "false"}}),
+        (
+            "PostToolUseFailure",
+            {"tool_name": "Bash", "tool_input": {"command": "false"}},
+        ),
         ("TaskCompleted", {}),
         ("TeammateIdle", {}),
     ],
 )
 def test_no_hookSpecificOutput_on_banned_events(bundle_root, event_name, extra_fields):
-    payload = {"session_id": "t", "cwd": str(bundle_root), "hook_event_name": event_name}
+    payload = {
+        "session_id": "t",
+        "cwd": str(bundle_root),
+        "hook_event_name": event_name,
+    }
     payload.update(extra_fields)
     result = evaluate_payload(payload)
     if result.output is not None:
@@ -694,9 +827,11 @@ def test_pretooluse_uses_hookSpecificOutput(load_fixture):
 
 def test_permission_request_uses_decision_behavior(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
+        "session_id": "t",
+        "cwd": str(bundle_root),
         "hook_event_name": "PermissionRequest",
-        "tool_name": "Bash", "tool_input": {"command": "git commit --no-verify -m x"},
+        "tool_name": "Bash",
+        "tool_input": {"command": "git commit --no-verify -m x"},
     }
     result = evaluate_payload(payload)
     spec = result.output["hookSpecificOutput"]
@@ -706,8 +841,10 @@ def test_permission_request_uses_decision_behavior(bundle_root):
 
 def test_stop_clean_uses_systemMessage(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
-        "hook_event_name": "Stop", "stop_response": "Done.",
+        "session_id": "t",
+        "cwd": str(bundle_root),
+        "hook_event_name": "Stop",
+        "stop_response": "Done.",
     }
     result = evaluate_payload(payload)
     assert result.output is not None
@@ -747,12 +884,15 @@ def test_all_outputs_json_serialisable(load_fixture):
         result = evaluate_payload(load_fixture(fixture_file.name))
         if result.output is not None:
             roundtrip = json.loads(json.dumps(result.output))
-            assert result.output == roundtrip, f"{fixture_file.name}: not JSON round-trip safe"
+            assert result.output == roundtrip, (
+                f"{fixture_file.name}: not JSON round-trip safe"
+            )
 
 
 # ===========================================================================
 # LangGraph rules
 # ===========================================================================
+
 
 class TestLangGraph:
     def _posttool_payload(self, tmp_project, rel_path: str, code: str) -> dict:
@@ -760,8 +900,10 @@ class TestLangGraph:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(code)
         return {
-            "session_id": "t", "cwd": str(tmp_project),
-            "hook_event_name": "PostToolUse", "tool_name": "Write",
+            "session_id": "t",
+            "cwd": str(tmp_project),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
             "tool_input": {"file_path": rel_path, "content": code},
             "tool_response": {"filePath": rel_path, "success": True},
         }
@@ -800,18 +942,18 @@ class TestLangGraph:
         [
             pytest.param(
                 "from langgraph.graph import StateGraph\n"
-                "def my_node(state):\n    state[\"counter\"] = state[\"counter\"] + 1\n    return state\n",
+                'def my_node(state):\n    state["counter"] = state["counter"] + 1\n    return state\n',
                 True,
                 id="subscript-assign-flagged",
             ),
             pytest.param(
                 "from langgraph.graph import StateGraph\n"
-                "def my_node(state):\n    state[\"items\"].append(\"new\")\n    return state\n",
+                'def my_node(state):\n    state["items"].append("new")\n    return state\n',
                 True,
                 id="append-flagged",
             ),
             pytest.param(
-                "def my_node(state):\n    val = state.get(\"counter\", 0)\n    return {\"counter\": val + 1}\n",
+                'def my_node(state):\n    val = state.get("counter", 0)\n    return {"counter": val + 1}\n',
                 False,
                 id="get-read-only-not-flagged",
             ),
@@ -861,7 +1003,7 @@ class TestLangGraph:
         code = (
             "from typing import TypedDict\nfrom langgraph.graph import StateGraph\n"
             "class BadState(TypedDict):\n    items: list[str]\n\n"
-            "def bad_node(state):\n    state[\"items\"].append(\"x\")\n    return state\n"
+            'def bad_node(state):\n    state["items"].append("x")\n    return state\n'
         )
         payload = self._posttool_payload(tmp_project, "graph/bad.py", code)
         result = evaluate_payload(payload)
@@ -880,8 +1022,10 @@ class TestLangGraph:
             '[project]\nname = "my-agent"\ndependencies = ["langgraph>=0.2"]\n'
         )
         payload = {
-            "session_id": "t", "cwd": str(tmp_project),
-            "hook_event_name": "PostToolUse", "tool_name": "Edit",
+            "session_id": "t",
+            "cwd": str(tmp_project),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Edit",
             "tool_input": {"file_path": "graph/nodes.py", "content": code},
             "tool_response": {"filePath": "graph/nodes.py", "success": True},
         }
@@ -894,8 +1038,10 @@ class TestLangGraph:
         (tmp_project / "graph" / "nodes.py").write_text(code)
         # No pyproject.toml
         payload = {
-            "session_id": "t", "cwd": str(tmp_project),
-            "hook_event_name": "PostToolUse", "tool_name": "Edit",
+            "session_id": "t",
+            "cwd": str(tmp_project),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Edit",
             "tool_input": {"file_path": "graph/nodes.py", "content": code},
             "tool_response": {"filePath": "graph/nodes.py", "success": True},
         }
@@ -908,14 +1054,27 @@ class TestLangGraph:
 # Regex rule coverage: PY-LOG-001 (ban stdlib logging)
 # ===========================================================================
 
+
 @pytest.mark.parametrize(
     "code, should_deny",
     [
-        pytest.param("import logging\nlogger = logging.getLogger(__name__)\n", True, id="import-logging"),
-        pytest.param("from logging import StreamHandler\n", True, id="from-logging-import"),
+        pytest.param(
+            "import logging\nlogger = logging.getLogger(__name__)\n",
+            True,
+            id="import-logging",
+        ),
+        pytest.param(
+            "from logging import StreamHandler\n", True, id="from-logging-import"
+        ),
         pytest.param("logging.getLogger('myapp')\n", True, id="getLogger-call"),
-        pytest.param("import structlog\nlog = structlog.get_logger()\n", False, id="structlog-allowed"),
-        pytest.param("# logging is disabled\nprint('hello')\n", False, id="comment-not-matched"),
+        pytest.param(
+            "import structlog\nlog = structlog.get_logger()\n",
+            False,
+            id="structlog-allowed",
+        ),
+        pytest.param(
+            "# logging is disabled\nprint('hello')\n", False, id="comment-not-matched"
+        ),
     ],
 )
 def test_py_log_001(pretool_write, code, should_deny):
@@ -931,11 +1090,14 @@ def test_py_log_001(pretool_write, code, should_deny):
 # Regex rule coverage: PY-TYPE-002 (ban type suppressions)
 # ===========================================================================
 
+
 @pytest.mark.parametrize(
     "code, should_deny",
     [
         pytest.param("x = foo()  # type: ignore\n", True, id="type-ignore"),
-        pytest.param("x = foo()  # type: ignore[arg-type]\n", True, id="type-ignore-code"),
+        pytest.param(
+            "x = foo()  # type: ignore[arg-type]\n", True, id="type-ignore-code"
+        ),
         pytest.param("x = foo()  # noqa\n", True, id="noqa"),
         pytest.param("x = foo()  # noqa: E501\n", True, id="noqa-code"),
         pytest.param("x = foo()  # ruff: noqa\n", True, id="ruff-noqa"),
@@ -958,6 +1120,7 @@ def test_py_type_002(pretool_write, code, should_deny):
 # Regex rule coverage: PY-QUALITY-008 (commented-out code)
 # ===========================================================================
 
+
 class TestCommentedOutCode:
     def test_two_commented_lines_denied(self, pretool_write):
         code = "# def old_func():\n# import os\nx = 1\n"
@@ -979,13 +1142,18 @@ class TestCommentedOutCode:
 # Regex rule coverage: PY-QUALITY-009 (hardcoded paths)
 # ===========================================================================
 
+
 @pytest.mark.parametrize(
     "code, should_deny",
     [
         pytest.param("path = '/home/trav/data/file.txt'\n", True, id="linux-home"),
-        pytest.param("path = '/Users/admin/Desktop/file.txt'\n", True, id="macos-users"),
+        pytest.param(
+            "path = '/Users/admin/Desktop/file.txt'\n", True, id="macos-users"
+        ),
         pytest.param("path = '/tmp/mydata/cache.db'\n", True, id="tmp-specific"),
-        pytest.param("path = Path(__file__).parent / 'data'\n", False, id="relative-path-ok"),
+        pytest.param(
+            "path = Path(__file__).parent / 'data'\n", False, id="relative-path-ok"
+        ),
         pytest.param("path = '/tmp/x'\n", False, id="tmp-short-ok"),
     ],
 )
@@ -1001,6 +1169,7 @@ def test_py_quality_009(pretool_write, code, should_deny):
 # ===========================================================================
 # Regex rule coverage: TS rules (TS-LINT-001, TS-TYPE-001, TS-TYPE-002)
 # ===========================================================================
+
 
 class TestTypeScriptRules:
     def test_ts_type_001_any_denied(self, pretool_write):
@@ -1029,15 +1198,15 @@ class TestTypeScriptRules:
         assert "TS-TYPE-002" not in finding_ids(result)
 
     def test_ts_lint_001_shell_ignore_inject(self, pretool_bash):
-        result = evaluate_payload(pretool_bash(
-            "sed -i '1i // @ts-ignore' src/broken.ts"
-        ))
+        result = evaluate_payload(
+            pretool_bash("sed -i '1i // @ts-ignore' src/broken.ts")
+        )
         assert "TS-LINT-001" in finding_ids(result)
 
     def test_ts_lint_001_shell_eslint_disable(self, pretool_bash):
-        result = evaluate_payload(pretool_bash(
-            "echo '// eslint-disable-next-line' >> src/util.tsx"
-        ))
+        result = evaluate_payload(
+            pretool_bash("echo '// eslint-disable-next-line' >> src/util.tsx")
+        )
         assert "TS-LINT-001" in finding_ids(result)
 
 
@@ -1045,9 +1214,10 @@ class TestTypeScriptRules:
 # Regex rule coverage: RS-QUALITY-001 (Rust TODOs), RS-QUALITY-003 (magic nums)
 # ===========================================================================
 
+
 class TestRustRules:
     def test_rs_quality_001_todo_denied(self, pretool_write):
-        code = "fn main() {\n    // TODO: fix this\n    println!(\"hello\");\n}\n"
+        code = 'fn main() {\n    // TODO: fix this\n    println!("hello");\n}\n'
         result = evaluate_payload(pretool_write("src/main.rs", code))
         assert "RS-QUALITY-001" in finding_ids(result)
 
@@ -1076,32 +1246,31 @@ class TestRustRules:
 # Regex rule coverage: CONFIG-002/003 (enforcer config protection)
 # ===========================================================================
 
+
 class TestConfigProtection:
     def test_config_002_write_denied(self, pretool_write):
-        result = evaluate_payload(pretool_write(
-            ".claude/hook-layer/config.json", '{"regex_rules": []}'
-        ))
+        result = evaluate_payload(
+            pretool_write(".claude/hook-layer/config.json", '{"regex_rules": []}')
+        )
         ids = finding_ids(result)
         assert "CONFIG-002" in ids or "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" in ids
 
     def test_config_003_sed_denied(self, pretool_bash):
-        result = evaluate_payload(pretool_bash(
-            "sed -i 's/true/false/' .claude/hook-layer/config.json"
-        ))
+        result = evaluate_payload(
+            pretool_bash("sed -i 's/true/false/' .claude/hook-layer/config.json")
+        )
         ids = finding_ids(result)
         assert "CONFIG-003" in ids or "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" in ids
 
     def test_config_003_tee_denied(self, pretool_bash):
-        result = evaluate_payload(pretool_bash(
-            "echo '{}' | tee .claude/hook-layer/config.json"
-        ))
+        result = evaluate_payload(
+            pretool_bash("echo '{}' | tee .claude/hook-layer/config.json")
+        )
         ids = finding_ids(result)
         assert "CONFIG-003" in ids or "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" in ids
 
     def test_config_003_cat_allowed(self, pretool_bash):
-        result = evaluate_payload(pretool_bash(
-            "cat .claude/hook-layer/config.json"
-        ))
+        result = evaluate_payload(pretool_bash("cat .claude/hook-layer/config.json"))
         assert "CONFIG-003" not in finding_ids(result)
 
 
@@ -1109,14 +1278,25 @@ class TestConfigProtection:
 # Regex rule coverage: linter config shell edits
 # ===========================================================================
 
+
 @pytest.mark.parametrize(
     "command, rule_id",
     [
-        pytest.param("sed -i 's/off/error/' .eslintrc.json", "FE-LINTER-002", id="eslintrc-sed"),
-        pytest.param("echo '{}' | tee prettier.config.js", "FE-LINTER-002", id="prettier-tee"),
+        pytest.param(
+            "sed -i 's/off/error/' .eslintrc.json", "FE-LINTER-002", id="eslintrc-sed"
+        ),
+        pytest.param(
+            "echo '{}' | tee prettier.config.js", "FE-LINTER-002", id="prettier-tee"
+        ),
         pytest.param("sed -i 's/E501//' .flake8", "PY-LINTER-002", id="flake8-sed"),
-        pytest.param("echo 'line-length = 120' >> ruff.toml", "PY-LINTER-002", id="ruff-redirect"),
-        pytest.param("sed -i 's/strict/basic/' pyrightconfig.json", "PY-LINTER-002", id="pyright-sed"),
+        pytest.param(
+            "echo 'line-length = 120' >> ruff.toml", "PY-LINTER-002", id="ruff-redirect"
+        ),
+        pytest.param(
+            "sed -i 's/strict/basic/' pyrightconfig.json",
+            "PY-LINTER-002",
+            id="pyright-sed",
+        ),
     ],
 )
 def test_linter_shell_edit_denied(pretool_bash, command, rule_id):
@@ -1128,35 +1308,37 @@ def test_linter_shell_edit_denied(pretool_bash, command, rule_id):
 # Regex rule coverage: QA-PATH rules
 # ===========================================================================
 
+
 class TestQAPathRules:
     def test_qa_path_001_write_denied(self, pretool_write):
-        result = evaluate_payload(pretool_write(
-            "src/test/code-quality.test.ts", "describe('quality', () => {});\n"
-        ))
+        result = evaluate_payload(
+            pretool_write(
+                "src/test/code-quality.test.ts", "describe('quality', () => {});\n"
+            )
+        )
         assert "QA-PATH-001" in finding_ids(result)
 
     def test_qa_path_002_sed_denied(self, pretool_bash):
-        result = evaluate_payload(pretool_bash(
-            "sed -i 's/strict/lax/' src/test/code-quality.test.ts"
-        ))
+        result = evaluate_payload(
+            pretool_bash("sed -i 's/strict/lax/' src/test/code-quality.test.ts")
+        )
         assert "QA-PATH-002" in finding_ids(result)
 
     def test_qa_path_004_redirect_denied(self, pretool_bash):
-        result = evaluate_payload(pretool_bash(
-            "echo 'pass' >> tests/quality/test_lint.py"
-        ))
+        result = evaluate_payload(
+            pretool_bash("echo 'pass' >> tests/quality/test_lint.py")
+        )
         assert "QA-PATH-004" in finding_ids(result)
 
     def test_qa_path_004_cat_allowed(self, pretool_bash):
-        result = evaluate_payload(pretool_bash(
-            "cat tests/quality/test_lint.py"
-        ))
+        result = evaluate_payload(pretool_bash("cat tests/quality/test_lint.py"))
         assert "QA-PATH-004" not in finding_ids(result)
 
 
 # ===========================================================================
 # Regex rule coverage: REMIND-SEARCH-001 (context, not deny)
 # ===========================================================================
+
 
 class TestSearchReminder:
     def test_grep_triggers_reminder(self, pretool_bash):
@@ -1173,17 +1355,14 @@ class TestSearchReminder:
 # Regex rule coverage: WARN-BASELINE-001/002 (context warnings)
 # ===========================================================================
 
+
 class TestBaselineWarnings:
     def test_baseline_path_warns(self, pretool_write):
-        result = evaluate_payload(pretool_write(
-            "baselines.json", '{"rules": {}}\n'
-        ))
+        result = evaluate_payload(pretool_write("baselines.json", '{"rules": {}}\n'))
         assert "WARN-BASELINE-001" in finding_ids(result)
 
     def test_baseline_shell_edit_warns(self, pretool_bash):
-        result = evaluate_payload(pretool_bash(
-            "sed -i 's/old/new/' baselines.json"
-        ))
+        result = evaluate_payload(pretool_bash("sed -i 's/old/new/' baselines.json"))
         assert "WARN-BASELINE-002" in finding_ids(result)
 
     def test_baseline_cat_no_warn(self, pretool_bash):
@@ -1195,14 +1374,17 @@ class TestBaselineWarnings:
 # Python rule coverage: PostToolUse AST rules (PY-CODE-008 through 016)
 # ===========================================================================
 
+
 class TestPostToolUseAST:
     def _posttool_payload(self, tmp_project, rel_path, code):
         target = tmp_project / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(code)
         return {
-            "session_id": "t", "cwd": str(tmp_project),
-            "hook_event_name": "PostToolUse", "tool_name": "Write",
+            "session_id": "t",
+            "cwd": str(tmp_project),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
             "tool_input": {"file_path": rel_path, "content": code},
             "tool_response": {"filePath": rel_path, "success": True},
         }
@@ -1214,7 +1396,9 @@ class TestPostToolUseAST:
         assert any(f.rule_id == "PY-CODE-008" for f in result.findings)
 
     def test_py_code_008_short_method_ok(self, tmp_project):
-        payload = self._posttool_payload(tmp_project, "src/ok.py", "def short():\n    return 1\n")
+        payload = self._posttool_payload(
+            tmp_project, "src/ok.py", "def short():\n    return 1\n"
+        )
         result = evaluate_payload(payload)
         assert not any(f.rule_id == "PY-CODE-008" for f in result.findings)
 
@@ -1244,13 +1428,17 @@ class TestPostToolUseAST:
         assert any(f.rule_id == "PY-CODE-011" for f in result.findings)
 
     def test_py_code_011_shallow_ok(self, tmp_project):
-        code = "def flat():\n    if True:\n        for x in [1]:\n            return x\n"
+        code = (
+            "def flat():\n    if True:\n        for x in [1]:\n            return x\n"
+        )
         payload = self._posttool_payload(tmp_project, "src/flat.py", code)
         result = evaluate_payload(payload)
         assert not any(f.rule_id == "PY-CODE-011" for f in result.findings)
 
     def test_py_code_014_god_class(self, tmp_project):
-        methods = "\n".join(f"    def method_{i}(self):\n        pass\n" for i in range(12))
+        methods = "\n".join(
+            f"    def method_{i}(self):\n        pass\n" for i in range(12)
+        )
         code = f"class GodObject:\n{methods}\n"
         payload = self._posttool_payload(tmp_project, "src/god.py", code)
         result = evaluate_payload(payload)
@@ -1263,7 +1451,9 @@ class TestPostToolUseAST:
         assert not any(f.rule_id == "PY-CODE-014" for f in result.findings)
 
     def test_py_code_015_high_complexity(self, tmp_project):
-        branches = "\n".join(f"    elif x == {i}:\n        return {i}" for i in range(1, 13))
+        branches = "\n".join(
+            f"    elif x == {i}:\n        return {i}" for i in range(1, 13)
+        )
         code = f"def complex_func(x):\n    if x == 0:\n        return 0\n{branches}\n"
         payload = self._posttool_payload(tmp_project, "src/complex.py", code)
         result = evaluate_payload(payload)
@@ -1277,8 +1467,10 @@ class TestPostToolUseAST:
 
     def test_posttool_read_tool_skipped(self, tmp_project):
         payload = {
-            "session_id": "t", "cwd": str(tmp_project),
-            "hook_event_name": "PostToolUse", "tool_name": "Read",
+            "session_id": "t",
+            "cwd": str(tmp_project),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
             "tool_input": {"file_path": "src/sample.py"},
             "tool_response": {"content": "def bad(a,b,c,d,e):\n  pass\n"},
         }
@@ -1291,22 +1483,31 @@ class TestPostToolUseAST:
 # Python rule coverage: STOP-002 (quality reminder)
 # ===========================================================================
 
+
 def test_stop_002_fires_on_clean_stop(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
-        "hook_event_name": "Stop", "stop_response": "All tasks complete.",
+        "session_id": "t",
+        "cwd": str(bundle_root),
+        "hook_event_name": "Stop",
+        "stop_response": "All tasks complete.",
     }
     result = evaluate_payload(payload)
-    assert "STOP-002" in finding_ids(result)
+    findings = [f for f in result.findings if f.rule_id == "STOP-002"]
+    assert findings
+    assert "vibeforcer lint check" in findings[0].additional_context
 
 
 def test_stop_002_fires_on_subagent_stop(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
-        "hook_event_name": "SubagentStop", "stop_response": "Done.",
+        "session_id": "t",
+        "cwd": str(bundle_root),
+        "hook_event_name": "SubagentStop",
+        "stop_response": "Done.",
     }
     result = evaluate_payload(payload)
-    assert "STOP-002" in finding_ids(result)
+    findings = [f for f in result.findings if f.rule_id == "STOP-002"]
+    assert findings
+    assert "vibeforcer lint check" in findings[0].additional_context
 
 
 # ===========================================================================
@@ -1317,9 +1518,11 @@ def test_stop_002_fires_on_subagent_stop(bundle_root):
 # Python rule coverage: QUALITY-POST-001
 # ===========================================================================
 
+
 def test_quality_post_001_git_commit_context(bundle_root):
     payload = {
-        "session_id": "t", "cwd": str(bundle_root),
+        "session_id": "t",
+        "cwd": str(bundle_root),
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
         "tool_input": {"command": "git commit -m 'feat: new feature'"},
@@ -1332,20 +1535,24 @@ def test_quality_post_001_git_commit_context(bundle_root):
 # Regex rule coverage: PY-QUALITY-010 (magic numbers)
 # ===========================================================================
 
+
 @pytest.mark.parametrize(
     "code, should_deny",
     [
         pytest.param(
             "def retry():\n    if count > 1000:\n        return\n",
-            True, id="magic-1000",
+            True,
+            id="magic-1000",
         ),
         pytest.param(
             "MAX_RETRIES = 1000\ndef retry():\n    pass\n",
-            False, id="named-constant-ok",
+            False,
+            id="named-constant-ok",
         ),
         pytest.param(
             "x = 1\ny = 0\n",
-            False, id="small-numbers-ok",
+            False,
+            id="small-numbers-ok",
         ),
     ],
 )
@@ -1361,6 +1568,7 @@ def test_py_quality_010(pretool_write, code, should_deny):
 # ===========================================================================
 # PostToolUse AST: PY-CODE-012 (feature envy)
 # ===========================================================================
+
 
 def test_py_code_012_feature_envy(tmp_project):
     """Function where >60% of attribute accesses target one external object."""
@@ -1379,8 +1587,10 @@ def test_py_code_012_feature_envy(tmp_project):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code)
     payload = {
-        "session_id": "t", "cwd": str(tmp_project),
-        "hook_event_name": "PostToolUse", "tool_name": "Write",
+        "session_id": "t",
+        "cwd": str(tmp_project),
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
         "tool_input": {"file_path": "src/envy.py", "content": code},
         "tool_response": {"filePath": "src/envy.py", "success": True},
     }
@@ -1389,13 +1599,16 @@ def test_py_code_012_feature_envy(tmp_project):
     # Feature envy: 7 accesses on order.customer out of ~7 total = 100%
     if findings_012:
         assert findings_012[0].decision is None, "Must be advisory"
-        assert "customer" in findings_012[0].additional_context.lower() or \
-               "order" in findings_012[0].additional_context.lower()
+        assert (
+            "customer" in findings_012[0].additional_context.lower()
+            or "order" in findings_012[0].additional_context.lower()
+        )
 
 
 # ===========================================================================
 # PostToolUse AST: PY-CODE-013 (thin wrapper) — explicit positive
 # ===========================================================================
+
 
 def test_py_code_013_thin_wrapper_positive(tmp_project):
     """Single-line delegation should fire PY-CODE-013."""
@@ -1404,8 +1617,10 @@ def test_py_code_013_thin_wrapper_positive(tmp_project):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code)
     payload = {
-        "session_id": "t", "cwd": str(tmp_project),
-        "hook_event_name": "PostToolUse", "tool_name": "Write",
+        "session_id": "t",
+        "cwd": str(tmp_project),
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
         "tool_input": {"file_path": "src/thin.py", "content": code},
         "tool_response": {"filePath": "src/thin.py", "success": True},
     }
@@ -1427,8 +1642,10 @@ def test_py_code_013_multi_line_not_thin(tmp_project):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code)
     payload = {
-        "session_id": "t", "cwd": str(tmp_project),
-        "hook_event_name": "PostToolUse", "tool_name": "Write",
+        "session_id": "t",
+        "cwd": str(tmp_project),
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
         "tool_input": {"file_path": "src/not_thin.py", "content": code},
         "tool_response": {"filePath": "src/not_thin.py", "success": True},
     }
@@ -1440,21 +1657,18 @@ def test_py_code_013_multi_line_not_thin(tmp_project):
 # PostToolUse AST: PY-CODE-016 (dead code) — explicit positive
 # ===========================================================================
 
+
 def test_py_code_016_dead_code_after_return(tmp_project):
     """Code after unconditional return should fire PY-CODE-016."""
-    code = (
-        "def func():\n"
-        "    return 42\n"
-        "    x = 1\n"
-        "    y = 2\n"
-        "    print(x + y)\n"
-    )
+    code = "def func():\n    return 42\n    x = 1\n    y = 2\n    print(x + y)\n"
     target = tmp_project / "src" / "dead.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code)
     payload = {
-        "session_id": "t", "cwd": str(tmp_project),
-        "hook_event_name": "PostToolUse", "tool_name": "Write",
+        "session_id": "t",
+        "cwd": str(tmp_project),
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
         "tool_input": {"file_path": "src/dead.py", "content": code},
         "tool_response": {"filePath": "src/dead.py", "success": True},
     }
@@ -1468,6 +1682,7 @@ def test_py_code_016_dead_code_after_return(tmp_project):
 # ===========================================================================
 # PY-QUALITY-011: Block _prefix_sibling.py flat-file pattern
 # ===========================================================================
+
 
 @pytest.mark.parametrize(
     "path, should_deny",
@@ -1494,11 +1709,14 @@ def test_py_quality_011(pretool_write, path, should_deny):
 # PY-CODE-017: Flat file sibling sprawl (PostToolUse directory scanner)
 # ===========================================================================
 
+
 class TestFlatFileSiblings:
     def _posttool(self, tmp_project, rel_path):
         return {
-            "session_id": "t", "cwd": str(tmp_project),
-            "hook_event_name": "PostToolUse", "tool_name": "Write",
+            "session_id": "t",
+            "cwd": str(tmp_project),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
             "tool_input": {"file_path": rel_path, "content": "pass"},
             "tool_response": {"filePath": rel_path, "success": True},
         }
@@ -1509,7 +1727,9 @@ class TestFlatFileSiblings:
         (pkg / "_parser_lexer.py").write_text("pass")
         (pkg / "_parser_ast.py").write_text("pass")
         (pkg / "_parser_visitor.py").write_text("pass")
-        result = evaluate_payload(self._posttool(tmp_project, "src/agents/_parser_visitor.py"))
+        result = evaluate_payload(
+            self._posttool(tmp_project, "src/agents/_parser_visitor.py")
+        )
         assert any(f.rule_id == "PY-CODE-017" for f in result.findings)
 
     def test_two_siblings_ok(self, tmp_project):
@@ -1517,7 +1737,9 @@ class TestFlatFileSiblings:
         pkg.mkdir(parents=True, exist_ok=True)
         (pkg / "_parser_lexer.py").write_text("pass")
         (pkg / "_parser_ast.py").write_text("pass")
-        result = evaluate_payload(self._posttool(tmp_project, "src/agents/_parser_ast.py"))
+        result = evaluate_payload(
+            self._posttool(tmp_project, "src/agents/_parser_ast.py")
+        )
         assert not any(f.rule_id == "PY-CODE-017" for f in result.findings)
 
     def test_different_prefixes_dont_combine(self, tmp_project):
@@ -1526,7 +1748,9 @@ class TestFlatFileSiblings:
         (pkg / "_parser_lexer.py").write_text("pass")
         (pkg / "_parser_ast.py").write_text("pass")
         (pkg / "_util_logging.py").write_text("pass")
-        result = evaluate_payload(self._posttool(tmp_project, "src/agents/_util_logging.py"))
+        result = evaluate_payload(
+            self._posttool(tmp_project, "src/agents/_util_logging.py")
+        )
         assert not any(f.rule_id == "PY-CODE-017" for f in result.findings)
 
     def test_message_suggests_package_structure(self, tmp_project):
@@ -1535,7 +1759,9 @@ class TestFlatFileSiblings:
         (pkg / "_exec_fill.py").write_text("pass")
         (pkg / "_exec_route.py").write_text("pass")
         (pkg / "_exec_trace.py").write_text("pass")
-        result = evaluate_payload(self._posttool(tmp_project, "src/agents/_exec_trace.py"))
+        result = evaluate_payload(
+            self._posttool(tmp_project, "src/agents/_exec_trace.py")
+        )
         f017 = [f for f in result.findings if f.rule_id == "PY-CODE-017"]
         assert f017
         assert "__init__.py" in f017[0].message
@@ -1549,8 +1775,10 @@ class TestFlatFileSiblings:
         (pkg / "_parser_ast.py").write_text("pass")
         (pkg / "_parser_visitor.py").write_text("pass")
         payload = {
-            "session_id": "t", "cwd": str(tmp_project),
-            "hook_event_name": "PostToolUse", "tool_name": "Read",
+            "session_id": "t",
+            "cwd": str(tmp_project),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
             "tool_input": {"file_path": "src/agents/_parser_visitor.py"},
             "tool_response": {"content": "pass"},
         }
@@ -1565,7 +1793,9 @@ class TestFlatFileSiblings:
         (pkg / "_parser_ast.py").write_text("pass")
         (pkg / "_parser_visitor.py").write_text("pass")
 
-        result = evaluate_payload(self._posttool(worktree, "src/agents/_parser_visitor.py"))
+        result = evaluate_payload(
+            self._posttool(worktree, "src/agents/_parser_visitor.py")
+        )
         f017 = [f for f in result.findings if f.rule_id == "PY-CODE-017"]
         assert f017, "Expected PY-CODE-017 to fire from worktree cwd"
         assert f017[0].metadata["directory"] == str(pkg)
@@ -1577,6 +1807,7 @@ class TestFlatFileSiblings:
 # Bug fix tests: sed in SAFE_READ_SHELL_VERBS
 # ===========================================================================
 
+
 class TestSedNotSafeRead:
     """sed is a transform tool, not a read tool. Even without -i,
     `sed 's/x/y/' file > file` is destructive. It should not be
@@ -1585,34 +1816,43 @@ class TestSedNotSafeRead:
     def test_sed_without_redirect_blocked_on_protected_path(self, pretool_bash):
         """Plain sed (no -i, no redirect) on a protected path should be denied.
         Currently passes because sed is in SAFE_READ_SHELL_VERBS."""
-        result = evaluate_payload(pretool_bash(
-            "sed 's/true/false/' .claude/hooks/run-pretool.sh"
-        ))
+        result = evaluate_payload(
+            pretool_bash("sed 's/true/false/' .claude/hooks/run-pretool.sh")
+        )
         # sed to stdout is harmless, but it shouldn't exempt the command
         # from protected path checks. The path is protected regardless.
         ids = finding_ids(result)
-        assert "BUILTIN-PROTECTED-PATHS" in ids or "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" in ids
+        assert (
+            "BUILTIN-PROTECTED-PATHS" in ids or "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" in ids
+        )
 
     def test_sed_i_blocked_on_protected_path(self, pretool_bash):
         """sed -i on a protected path must always be blocked."""
-        result = evaluate_payload(pretool_bash(
-            "sed -i 's/true/false/' .claude/hooks/run-pretool.sh"
-        ))
+        result = evaluate_payload(
+            pretool_bash("sed -i 's/true/false/' .claude/hooks/run-pretool.sh")
+        )
         ids = finding_ids(result)
-        assert "BUILTIN-PROTECTED-PATHS" in ids or "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" in ids
+        assert (
+            "BUILTIN-PROTECTED-PATHS" in ids or "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" in ids
+        )
 
     def test_sed_redirect_blocked_on_protected_path(self, pretool_bash):
         """sed with > redirect on a protected path must be blocked."""
-        result = evaluate_payload(pretool_bash(
-            "sed 's/x/y/' .claude/hooks/run-pretool.sh > .claude/hooks/run-pretool.sh"
-        ))
+        result = evaluate_payload(
+            pretool_bash(
+                "sed 's/x/y/' .claude/hooks/run-pretool.sh > .claude/hooks/run-pretool.sh"
+            )
+        )
         ids = finding_ids(result)
-        assert "BUILTIN-PROTECTED-PATHS" in ids or "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" in ids
+        assert (
+            "BUILTIN-PROTECTED-PATHS" in ids or "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" in ids
+        )
 
 
 # ===========================================================================
 # Bug fix tests: STOP-001 transcript reading efficiency
 # ===========================================================================
+
 
 class TestStopTranscriptReading:
     """STOP-001 should handle large transcripts without reading
@@ -1621,7 +1861,8 @@ class TestStopTranscriptReading:
     def test_stop_001_detects_preexisting_in_stop_response(self, bundle_root):
         """Basic STOP-001 functionality."""
         payload = {
-            "session_id": "t", "cwd": str(bundle_root),
+            "session_id": "t",
+            "cwd": str(bundle_root),
             "hook_event_name": "Stop",
             "stop_response": "These issues were pre-existing and not introduced by my changes.",
         }
@@ -1631,7 +1872,8 @@ class TestStopTranscriptReading:
     def test_stop_001_clean_stop_allowed(self, bundle_root):
         """Clean stop without dismissive language should pass."""
         payload = {
-            "session_id": "t", "cwd": str(bundle_root),
+            "session_id": "t",
+            "cwd": str(bundle_root),
             "hook_event_name": "Stop",
             "stop_response": "All tasks complete. Tests pass. Quality gate clean.",
         }
@@ -1641,14 +1883,28 @@ class TestStopTranscriptReading:
     def test_stop_001_reads_transcript_file(self, bundle_root, tmp_path):
         """STOP-001 should read from transcript_path when provided."""
         import json as _json
+
         transcript = tmp_path / "transcript.jsonl"
         lines = [
             _json.dumps({"type": "user", "message": {"content": "fix the bug"}}),
-            _json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "This was already existed before my changes."}]}}),
+            _json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "This was already existed before my changes.",
+                            }
+                        ]
+                    },
+                }
+            ),
         ]
         transcript.write_text("\n".join(lines))
         payload = {
-            "session_id": "t", "cwd": str(bundle_root),
+            "session_id": "t",
+            "cwd": str(bundle_root),
             "hook_event_name": "Stop",
             "transcript_path": str(transcript),
         }
@@ -1658,15 +1914,42 @@ class TestStopTranscriptReading:
     def test_stop_001_large_transcript_still_works(self, bundle_root, tmp_path):
         """STOP-001 should handle large transcripts efficiently."""
         import json as _json
+
         transcript = tmp_path / "large_transcript.jsonl"
         # Write 1000 padding lines + the dismissive response at the end
         lines = []
         for i in range(1000):
-            lines.append(_json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": f"Working on step {i}..."}]}}))
-        lines.append(_json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "These were pre-existing issues, not introduced by me."}]}}))
+            lines.append(
+                _json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {"type": "text", "text": f"Working on step {i}..."}
+                            ]
+                        },
+                    }
+                )
+            )
+        lines.append(
+            _json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "These were pre-existing issues, not introduced by me.",
+                            }
+                        ]
+                    },
+                }
+            )
+        )
         transcript.write_text("\n".join(lines))
         payload = {
-            "session_id": "t", "cwd": str(bundle_root),
+            "session_id": "t",
+            "cwd": str(bundle_root),
             "hook_event_name": "Stop",
             "transcript_path": str(transcript),
         }
@@ -1678,11 +1961,13 @@ class TestStopTranscriptReading:
 # Bug fix tests: redundant mkdir calls
 # ===========================================================================
 
+
 class TestTraceWriterInit:
     """TraceWriter should not duplicate mkdir calls that config already did."""
 
     def test_trace_writer_works_with_existing_dir(self, tmp_path):
         from vibeforcer.trace import TraceWriter
+
         trace_dir = tmp_path / "logs"
         trace_dir.mkdir()
         (trace_dir / "async").mkdir()
@@ -1692,6 +1977,7 @@ class TestTraceWriterInit:
 
     def test_trace_writer_works_with_missing_dir(self, tmp_path):
         from vibeforcer.trace import TraceWriter
+
         trace_dir = tmp_path / "new_logs"
         tw = TraceWriter(trace_dir)
         tw.event({"test": True})
@@ -1701,6 +1987,7 @@ class TestTraceWriterInit:
 # ===========================================================================
 # REMIND-PYTEST-MP: Remind to use pytest multiprocessing
 # ===========================================================================
+
 
 class TestRemindPytestMultiprocessing:
     """Advisory hook: when Claude runs pytest without -n flag,
@@ -1759,7 +2046,9 @@ class TestRemindPytestMultiprocessing:
         result = evaluate_payload(pretool_bash("pytest tests/"))
         for f in result.findings:
             if f.rule_id == "REMIND-PYTEST-MP":
-                assert f.decision is None, "Should be advisory (context), not a deny/block"
+                assert f.decision is None, (
+                    "Should be advisory (context), not a deny/block"
+                )
                 assert f.additional_context, "Should have additional_context"
                 break
         else:
@@ -1769,6 +2058,7 @@ class TestRemindPytestMultiprocessing:
 # ---------------------------------------------------------------------------
 # Sensitive Data Rule — safe suffix & regex tests
 # ---------------------------------------------------------------------------
+
 
 class TestSensitiveDataSafeSuffixes:
     """Test that .example, .sample, .template etc. bypass the sensitive data rule."""
@@ -1878,7 +2168,11 @@ class TestSensitiveDataSafeSuffixes:
     )
     def test_docker_files_not_blocked(self, pretool_write, file_path):
         """Docker and compose files must never be blocked by sensitive data rule."""
-        result = evaluate_payload(pretool_write(file_path, "version: '3'\nservices:\n  web:\n    image: nginx\n"))
+        result = evaluate_payload(
+            pretool_write(
+                file_path, "version: '3'\nservices:\n  web:\n    image: nginx\n"
+            )
+        )
         ids = finding_ids(result)
         assert "GLOBAL-BUILTIN-SENSITIVE-DATA" not in ids, (
             f"Docker file {file_path} should not be blocked by sensitive data rule"
@@ -1898,30 +2192,42 @@ class TestSensitiveDataSafeSuffixes:
 
     def test_env_with_extra_dots_not_safe(self, pretool_write):
         """.env.local.bak is safe (ends with .bak) but .env.staging is not."""
-        result_bak = evaluate_payload(pretool_write("project/.env.local.bak", "SECRET=x\n"))
+        result_bak = evaluate_payload(
+            pretool_write("project/.env.local.bak", "SECRET=x\n")
+        )
         assert_not_denied(result_bak)
 
-        result_staging = evaluate_payload(pretool_write("project/.env.staging", "SECRET=x\n"))
+        result_staging = evaluate_payload(
+            pretool_write("project/.env.staging", "SECRET=x\n")
+        )
         assert_denied_by(result_staging, "GLOBAL-BUILTIN-SENSITIVE-DATA")
 
     def test_pem_example_allowed(self, pretool_write):
         """A .pem.example file should be allowed."""
-        result = evaluate_payload(pretool_write("certs/server.pem.example", "-----BEGIN FAKE-----\n"))
+        result = evaluate_payload(
+            pretool_write("certs/server.pem.example", "-----BEGIN FAKE-----\n")
+        )
         assert_not_denied(result)
 
     def test_key_example_allowed(self, pretool_write):
         """A .key.example file should be allowed."""
-        result = evaluate_payload(pretool_write("certs/server.key.example", "fake-key-data\n"))
+        result = evaluate_payload(
+            pretool_write("certs/server.key.example", "fake-key-data\n")
+        )
         assert_not_denied(result)
 
     def test_npmrc_example_allowed(self, pretool_write):
         """.npmrc.example should be allowed."""
-        result = evaluate_payload(pretool_write(".npmrc.example", "registry=https://registry.npmjs.org/\n"))
+        result = evaluate_payload(
+            pretool_write(".npmrc.example", "registry=https://registry.npmjs.org/\n")
+        )
         assert_not_denied(result)
 
     def test_pypirc_template_allowed(self, pretool_write):
         """.pypirc.template should be allowed."""
-        result = evaluate_payload(pretool_write(".pypirc.template", "[pypi]\nusername = __token__\n"))
+        result = evaluate_payload(
+            pretool_write(".pypirc.template", "[pypi]\nusername = __token__\n")
+        )
         assert_not_denied(result)
 
     def test_env_in_unrelated_path_not_blocked(self, pretool_write):
@@ -1931,7 +2237,9 @@ class TestSensitiveDataSafeSuffixes:
 
     def test_dotenv_package_not_blocked(self, pretool_write):
         """A path like 'node_modules/dotenv/lib/main.js' shouldn't be blocked."""
-        result = evaluate_payload(pretool_write("node_modules/dotenv/lib/main.js", "module.exports = {}\n"))
+        result = evaluate_payload(
+            pretool_write("node_modules/dotenv/lib/main.js", "module.exports = {}\n")
+        )
         assert_not_denied(result)
 
     def test_bash_mixed_safe_and_unsafe(self, pretool_bash):
@@ -1948,6 +2256,7 @@ class TestSensitiveDataRegexPatterns:
     def test_pattern_auto_escaping(self, bundle_root):
         """Plain substring patterns are auto-escaped (dots become literal)."""
         from vibeforcer.rules.common import _compile_sensitive_patterns
+
         compiled = _compile_sensitive_patterns(["/.env"])
         assert compiled[0].search("/project/.env"), "Should match /.env"
         assert not compiled[0].search("/xenv"), "Escaped dot should not match 'x'"
@@ -1955,22 +2264,37 @@ class TestSensitiveDataRegexPatterns:
     def test_regex_pattern_preserved(self, bundle_root):
         """Patterns with regex metacharacters are compiled as-is."""
         from vibeforcer.rules.common import _compile_sensitive_patterns
+
         compiled = _compile_sensitive_patterns([r"\.env\.(local|staging|production)$"])
         assert compiled[0].search("config/.env.local"), "Should match .env.local"
-        assert compiled[0].search("config/.env.production"), "Should match .env.production"
-        assert not compiled[0].search("config/.env.example"), "Should not match .env.example"
+        assert compiled[0].search("config/.env.production"), (
+            "Should match .env.production"
+        )
+        assert not compiled[0].search("config/.env.example"), (
+            "Should not match .env.example"
+        )
 
     def test_empty_patterns_skipped(self, bundle_root):
         """Empty or whitespace-only patterns are silently skipped."""
         from vibeforcer.rules.common import _compile_sensitive_patterns
+
         compiled = _compile_sensitive_patterns(["", "  ", "/.env"])
         assert len(compiled) == 1, f"Expected 1 compiled pattern, got {len(compiled)}"
 
     def test_safe_suffixes_constant(self, bundle_root):
         """Verify the safe suffixes list includes expected entries."""
         from vibeforcer.rules.common import SensitiveDataRule
+
         rule = SensitiveDataRule()
-        expected = {".example", ".sample", ".template", ".defaults", ".dist", ".test", ".bak"}
+        expected = {
+            ".example",
+            ".sample",
+            ".template",
+            ".defaults",
+            ".dist",
+            ".test",
+            ".bak",
+        }
         assert expected == set(rule.SAFE_SUFFIXES), (
             f"SAFE_SUFFIXES mismatch: expected {expected}, got {set(rule.SAFE_SUFFIXES)}"
         )

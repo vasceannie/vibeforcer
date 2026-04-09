@@ -25,9 +25,16 @@ class Rule(ABC):
         raise NotImplementedError
 
 
+def is_rule_enabled(ctx: HookContext, rule_id: str, default: bool = True) -> bool:
+    value = ctx.config.enabled_rules.get(rule_id)
+    return default if value is None else bool(value)
+
+
 def join_messages(findings: Iterable[RuleFinding]) -> str:
     lines = []
     for finding in findings:
         if finding.message:
-            lines.append(f"[{finding.rule_id} | {finding.severity.as_name()}] {finding.message}")
+            lines.append(
+                f"[{finding.rule_id} | {finding.severity.as_name()}] {finding.message}"
+            )
     return "\n".join(lines)
