@@ -32,13 +32,16 @@ from vibeforcer.rules.langgraph import (
     LangGraphStateReducerRule,
 )
 from vibeforcer.rules.baseline_guard import BaselineGuardRule
-from vibeforcer.rules.error_rules import BashFailureReinforcementRule, BashOutputErrorRule
+from vibeforcer.rules.error_rules import (
+    BashFailureReinforcementRule,
+    BashOutputErrorRule,
+)
 from vibeforcer.rules.stop_rules import (
     ConfigChangeGuardRule,
     SessionStartContextRule,
     HookInfraExecProtectionRule,
     IgnorePreexistingRule,
-    RequireMakeQualityRule,
+    RequireQualityCheckRule,
     RulebookSecurityRule,
     WarnLargeFileRule,
 )
@@ -67,7 +70,7 @@ def build_rules(ctx: HookContext) -> list[Rule]:
         PythonImportFanoutRule(),
         BaselineGuardRule(),
         IgnorePreexistingRule(),
-        RequireMakeQualityRule(),
+        RequireQualityCheckRule(),
         WarnLargeFileRule(),
         HookInfraExecProtectionRule(),
         RulebookSecurityRule(),
@@ -80,7 +83,10 @@ def build_rules(ctx: HookContext) -> list[Rule]:
         LangGraphDeprecatedAPIRule(),
     ]
     rules.extend(
-        RegexRule(config=regex_rule, enabled=ctx.config.enabled_rules.get(regex_rule.rule_id, True))
+        RegexRule(
+            config=regex_rule,
+            enabled=ctx.config.enabled_rules.get(regex_rule.rule_id, True),
+        )
         for regex_rule in ctx.config.regex_rules
     )
     return rules

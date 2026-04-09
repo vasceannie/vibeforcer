@@ -168,7 +168,7 @@ _QUALITY_REMINDER = (
 )
 
 
-class RequireMakeQualityRule(Rule):
+class RequireQualityCheckRule(Rule):
     """Remind to run quality gate before stopping."""
 
     rule_id = "STOP-002"
