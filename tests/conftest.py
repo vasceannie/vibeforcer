@@ -72,7 +72,9 @@ def bundle_root() -> Path:
 def load_fixture():
     """Return a callable that loads a fixture JSON by name."""
     def _load(name: str) -> dict:
-        return json.loads((BUNDLE_ROOT / "fixtures" / name).read_text(encoding="utf-8"))
+        fixture_path = BUNDLE_ROOT / "fixtures" / name
+        raw = fixture_path.read_text(encoding="utf-8")
+        return json.loads(raw)
     return _load
 
 
@@ -109,6 +111,26 @@ def tmp_project(tmp_path):
         os.environ.pop("VIBEFORCER_CONFIG", None)
     else:
         os.environ["VIBEFORCER_CONFIG"] = old_config
+
+
+@pytest.fixture
+def langgraph_project(tmp_path):
+    """Create a temp project with a pyproject.toml declaring langgraph."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndependencies = ["langgraph>=0.2"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "async").mkdir()
+
+    old_root = os.environ.get("VIBEFORCER_ROOT")
+    os.environ["VIBEFORCER_ROOT"] = str(tmp_path)
+    yield tmp_path
+    if old_root is None:
+        os.environ.pop("VIBEFORCER_ROOT", None)
+    else:
+        os.environ["VIBEFORCER_ROOT"] = old_root
 
 
 # ---------------------------------------------------------------------------

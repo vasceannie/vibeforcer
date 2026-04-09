@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -16,130 +17,197 @@ def _default_log_path() -> Path:
     """Find the results.jsonl log file."""
     from vibeforcer.config import config_dir
 
-    # XDG location first
     xdg = config_dir() / "logs" / "results.jsonl"
     if xdg.exists():
         return xdg
 
-    # Legacy location
     legacy = Path.home() / ".claude" / "hooks" / "enforcer" / ".claude" / "hook-layer" / "logs" / "results.jsonl"
     if legacy.exists():
         return legacy
 
-    return xdg  # default even if not found
+    return xdg
 
 
-def load_entries(path: Path, days: int | None) -> list[dict]:
-    cutoff = None
-    if days is not None:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    entries = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
+def _parse_timestamp(ts_raw: str, cutoff: datetime | None) -> bool:
+    """Return True if the entry should be skipped (before cutoff)."""
+    if cutoff is None:
+        return False
+    try:
+        return datetime.fromisoformat(ts_raw) < cutoff
+    except (ValueError, TypeError):
+        return False
+
+
+def load_entries(path: Path, days: int | None) -> list[dict[str, object]]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days) if days is not None else None
+    entries: list[dict[str, object]] = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if not stripped:
                 continue
             try:
-                entry = json.loads(line)
+                entry = json.loads(stripped)
             except json.JSONDecodeError:
                 continue
-            if cutoff and "timestamp" in entry:
-                try:
-                    ts = datetime.fromisoformat(entry["timestamp"])
-                    if ts < cutoff:
-                        continue
-                except (ValueError, TypeError):
-                    pass
+            ts = entry.get("timestamp", "")
+            if isinstance(ts, str) and _parse_timestamp(ts, cutoff):
+                continue
             entries.append(entry)
     return entries
 
 
-def analyze(entries: list[dict]) -> dict:
-    total = len(entries)
-    by_event: Counter = Counter()
-    by_decision: Counter = Counter()
-    by_rule: Counter = Counter()
-    by_severity: Counter = Counter()
-    by_tool: Counter = Counter()
-    by_session: Counter = Counter()
-    denies_by_file: Counter = Counter()
-    denies_by_rule: Counter = Counter()
-    rule_examples: dict = defaultdict(list)
-    daily_counts: Counter = Counter()
-    session_deny_seq: dict = defaultdict(list)
-    fixture_filtered = 0
+@dataclass
+class _Counters:
+    """Mutable accumulators for the analysis pass."""
 
-    for entry in entries:
-        session = entry.get("session_id", "unknown")
-        if session.startswith("fixture-") or session.startswith("test-"):
-            fixture_filtered += 1
+    by_event: Counter[str] = field(default_factory=Counter)
+    by_decision: Counter[str] = field(default_factory=Counter)
+    by_rule: Counter[str] = field(default_factory=Counter)
+    by_severity: Counter[str] = field(default_factory=Counter)
+    by_tool: Counter[str] = field(default_factory=Counter)
+    by_session: Counter[str] = field(default_factory=Counter)
+    denies_by_file: Counter[str] = field(default_factory=Counter)
+    denies_by_rule: Counter[str] = field(default_factory=Counter)
+    rule_examples: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
+    daily_counts: Counter[str] = field(default_factory=Counter)
+    session_deny_seq: dict[str, list[tuple[str, str, str]]] = field(
+        default_factory=lambda: defaultdict(list),
+    )
+    fixture_filtered: int = 0
+
+
+@dataclass(slots=True)
+class _EntryContext:
+    """Per-entry fields extracted once and reused across findings."""
+
+    session: str
+    tool: str
+    ts_str: str
+
+
+def _record_deny_metadata(meta: object, counters: _Counters) -> None:
+    """Track file paths from a deny finding's metadata dict."""
+    if not isinstance(meta, dict):
+        return
+    path_val = meta.get("path")
+    if isinstance(path_val, str):
+        counters.denies_by_file[path_val] += 1
+    for hit in meta.get("hits", []):
+        if isinstance(hit, str):
+            counters.denies_by_file[hit] += 1
+
+
+def _process_finding(
+    finding: dict[str, object],
+    ectx: _EntryContext,
+    counters: _Counters,
+) -> bool:
+    """Process a single finding dict. Returns True if it was a deny."""
+    rule_id = str(finding.get("rule_id", "unknown"))
+    decision = finding.get("decision")
+    severity = str(finding.get("severity", "unknown"))
+
+    counters.by_rule[rule_id] += 1
+    if isinstance(decision, str):
+        counters.by_decision[decision] += 1
+    counters.by_severity[severity] += 1
+
+    if decision != "deny":
+        return False
+
+    counters.denies_by_rule[rule_id] += 1
+    counters.session_deny_seq[ectx.session].append((rule_id, ectx.tool, ectx.ts_str))
+    _record_deny_metadata(finding.get("metadata", {}), counters)
+    if len(counters.rule_examples[rule_id]) < 3:
+        counters.rule_examples[rule_id].append(str(finding.get("message", "")))
+    return True
+
+
+def _classify_findings(findings: list[object], ectx: _EntryContext, counters: _Counters) -> None:
+    """Process all findings and record an entry-level allow when nothing fired."""
+    has_deny = False
+    has_any_decision = False
+    for finding in findings:
+        if not isinstance(finding, dict):
             continue
-        event = entry.get("event_name", "unknown")
-        by_event[event] += 1
-        tool = entry.get("tool_name", "") or "(none)"
-        by_tool[tool] += 1
-        by_session[session] += 1
-        ts_str = entry.get("timestamp", "")
-        if ts_str:
-            try:
-                daily_counts[ts_str[:10]] += 1
-            except Exception:
-                pass
-        findings = entry.get("findings", [])
-        has_deny = False
-        for f in findings:
-            rule_id = f.get("rule_id", "unknown")
-            decision = f.get("decision")
-            severity = f.get("severity", "unknown")
-            message = f.get("message", "")
-            by_rule[rule_id] += 1
-            if decision:
-                by_decision[decision] += 1
-            by_severity[severity] += 1
-            if decision == "deny":
-                has_deny = True
-                denies_by_rule[rule_id] += 1
-                session_deny_seq[session].append((rule_id, tool, ts_str))
-                meta = f.get("metadata", {})
-                if "path" in meta:
-                    denies_by_file[meta["path"]] += 1
-                for hit in meta.get("hits", []):
-                    denies_by_file[hit] += 1
-                if len(rule_examples[rule_id]) < 3:
-                    rule_examples[rule_id].append(message)
-        if not findings:
-            by_decision["allow"] += 1
-        elif not has_deny:
-            by_decision["allow"] += 1
+        if _process_finding(finding, ectx, counters):
+            has_deny = True
+        if finding.get("decision") is not None:
+            has_any_decision = True
 
-    retry_counts: Counter = Counter()
-    for session, denies in session_deny_seq.items():
-        rc = Counter(r for r, _, _ in denies)
+    if not findings or (not has_deny and not has_any_decision):
+        counters.by_decision["allow"] += 1
+
+
+def _process_entry(entry: dict[str, object], counters: _Counters) -> None:
+    """Process a single results.jsonl entry into the counters."""
+    session = str(entry.get("session_id", "unknown"))
+    if session.startswith("fixture-") or session.startswith("test-"):
+        counters.fixture_filtered += 1
+        return
+
+    event = str(entry.get("event_name", "unknown"))
+    counters.by_event[event] += 1
+    tool = str(entry.get("tool_name", "")) or "(none)"
+    counters.by_tool[tool] += 1
+    counters.by_session[session] += 1
+
+    ts_str = str(entry.get("timestamp", ""))
+    if ts_str:
+        counters.daily_counts[ts_str[:10]] += 1
+
+    findings = entry.get("findings", [])
+    ectx = _EntryContext(session=session, tool=tool, ts_str=ts_str)
+    _classify_findings(findings if isinstance(findings, list) else [], ectx, counters)
+
+
+def _compute_retry_patterns(counters: _Counters) -> Counter[str]:
+    retry_counts: Counter[str] = Counter()
+    for session, denies in counters.session_deny_seq.items():
+        rc: Counter[str] = Counter(r for r, _, _ in denies)
         for rule_id, count in rc.items():
             if count >= 2:
                 retry_counts[f"{rule_id} (session {session[:8]}...)"] = count
+    return retry_counts
 
-    dates = sorted(daily_counts.keys())
+
+def analyze(entries: list[dict[str, object]]) -> dict[str, object]:
+    counters = _Counters()
+    for entry in entries:
+        _process_entry(entry, counters)
+
+    retry_counts = _compute_retry_patterns(counters)
+    dates = sorted(counters.daily_counts.keys())
     date_range = f"{dates[0]} to {dates[-1]}" if dates else "unknown"
 
     return {
-        "total_events": total,
-        "fixture_filtered": fixture_filtered,
+        "total_events": len(entries),
+        "fixture_filtered": counters.fixture_filtered,
         "date_range": date_range,
-        "by_event": by_event.most_common(),
-        "by_decision": by_decision.most_common(),
-        "by_severity": by_severity.most_common(),
-        "top_rules_denied": denies_by_rule.most_common(20),
-        "top_files_denied": denies_by_file.most_common(15),
-        "top_tools": by_tool.most_common(10),
-        "sessions": len(by_session),
-        "daily_counts": sorted(daily_counts.items()),
+        "by_event": counters.by_event.most_common(),
+        "by_decision": counters.by_decision.most_common(),
+        "by_severity": counters.by_severity.most_common(),
+        "top_rules_denied": counters.denies_by_rule.most_common(20),
+        "top_files_denied": counters.denies_by_file.most_common(15),
+        "top_tools": counters.by_tool.most_common(10),
+        "sessions": len(counters.by_session),
+        "daily_counts": sorted(counters.daily_counts.items()),
         "retry_patterns": retry_counts.most_common(15),
-        "rule_examples": dict(rule_examples),
+        "rule_examples": dict(counters.rule_examples),
     }
 
 
-def print_report(stats: dict) -> None:
+_PairList = list[tuple[str, int]]
+
+
+def _pairs(stats: dict[str, object], key: str) -> _PairList:
+    """Safely extract a list of (str, int) pairs from the stats dict."""
+    raw = stats.get(key, [])
+    return list(raw) if isinstance(raw, list) else []
+
+
+def print_report(stats: dict[str, object]) -> None:
     print("=" * 70)
     print("VIBEFORCER HOOK ACTIVITY REPORT")
     print("=" * 70)
@@ -149,42 +217,63 @@ def print_report(stats: dict) -> None:
         print(f"Fixture/test sessions filtered: {stats['fixture_filtered']:,}")
     print(f"Unique sessions: {stats['sessions']}")
 
+    raw_total = stats.get("total_events", 0)
+    total = int(raw_total) if isinstance(raw_total, (int, float, str)) else 1
     print("\n--- Decisions ---")
-    for d, c in stats["by_decision"]:
-        pct = c / max(stats["total_events"], 1) * 100
-        print(f"  {d:12s} {c:6,}  ({pct:.1f}%)")
+    for decision, count in _pairs(stats, "by_decision"):
+        pct = count / total * 100
+        print(f"  {decision:12s} {count:6,}  ({pct:.1f}%)")
 
     print("\n--- Event Types ---")
-    for e, c in stats["by_event"]:
-        print(f"  {e:25s} {c:6,}")
+    for event, count in _pairs(stats, "by_event"):
+        print(f"  {event:25s} {count:6,}")
 
+    _print_denied_rules(stats)
+    _print_denied_files(stats)
+    _print_retry_patterns(stats)
+    _print_daily_volume(stats)
+    _print_severity(stats)
+
+
+def _print_denied_rules(stats: dict[str, object]) -> None:
     print("\n--- Top Denied Rules ---")
-    for r, c in stats["top_rules_denied"]:
-        print(f"  {r:25s} {c:5,}")
-        exs = stats["rule_examples"].get(r, [])
-        if exs:
-            print(f"    └─ e.g. {exs[0][:100]}")
+    examples = stats.get("rule_examples", {})
+    for rule, count in _pairs(stats, "top_rules_denied"):
+        print(f"  {rule:25s} {count:5,}")
+        if isinstance(examples, dict):
+            exs = examples.get(rule, [])
+            if isinstance(exs, list) and exs:
+                print(f"    \u2514\u2500 e.g. {str(exs[0])[:100]}")
 
+
+def _print_denied_files(stats: dict[str, object]) -> None:
     print("\n--- Top Denied Files ---")
-    for p, c in stats["top_files_denied"]:
-        short = p.replace(str(Path.home()), "~")
-        print(f"  {c:4,}  {short}")
+    for path, count in _pairs(stats, "top_files_denied"):
+        short = str(path).replace(str(Path.home()), "~")
+        print(f"  {count:4,}  {short}")
 
+
+def _print_retry_patterns(stats: dict[str, object]) -> None:
     print("\n--- Retry Patterns (same rule denied 2+ in one session) ---")
-    if stats["retry_patterns"]:
-        for desc, c in stats["retry_patterns"]:
-            print(f"  {c:3,}x  {desc}")
+    patterns = _pairs(stats, "retry_patterns")
+    if patterns:
+        for desc, count in patterns:
+            print(f"  {count:3,}x  {desc}")
     else:
         print("  (none detected)")
 
-    print("\n--- Daily Volume ---")
-    for day, c in stats["daily_counts"][-14:]:
-        bar = "█" * min(c // 50, 60)
-        print(f"  {day}  {c:5,}  {bar}")
 
+def _print_daily_volume(stats: dict[str, object]) -> None:
+    print("\n--- Daily Volume ---")
+    for day, count in _pairs(stats, "daily_counts")[-14:]:
+        bar = "\u2588" * min(count // 50, 60)
+        print(f"  {day}  {count:5,}  {bar}")
+
+
+def _print_severity(stats: dict[str, object]) -> None:
     print("\n--- Severity Breakdown ---")
-    for s, c in stats["by_severity"]:
-        print(f"  {s:10s} {c:6,}")
+    for sev, count in _pairs(stats, "by_severity"):
+        print(f"  {sev:10s} {count:6,}")
     print()
 
 

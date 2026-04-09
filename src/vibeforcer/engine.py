@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
-
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from vibeforcer.adapters import get_adapter
@@ -9,11 +8,12 @@ from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.config import is_path_skipped, is_repo_disabled
 from vibeforcer.context import HookContext, build_context
 from vibeforcer.enrichment import enrich_findings
-from vibeforcer.models import EngineResult, RuleFinding
+from vibeforcer.models import EngineResult, RuleFinding, Severity
 from vibeforcer.rules import build_rules
+from vibeforcer.rules.base import Rule
 
 
-DECISION_ORDER = {
+DECISION_ORDER: dict[str | None, int] = {
     "deny": 4,
     "block": 4,
     "ask": 3,
@@ -22,16 +22,12 @@ DECISION_ORDER = {
 }
 
 
-def _sort_findings(findings: list[RuleFinding]) -> list[RuleFinding]:
-    return sorted(
-        findings,
-        key=lambda item: (DECISION_ORDER.get(item.decision, 0), int(item.severity)),
-        reverse=True,
-    )
+def _finding_sort_key(item: RuleFinding) -> tuple[int, int]:
+    return (DECISION_ORDER.get(item.decision, 0), int(item.severity))
 
 
-def _merge_updated_input(findings: list[RuleFinding]) -> dict[str, Any]:
-    merged: dict[str, Any] = {}
+def _merge_updated_input(findings: list[RuleFinding]) -> dict[str, object]:
+    merged: dict[str, object] = {}
     for finding in findings:
         merged.update(finding.updated_input)
     return merged
@@ -45,53 +41,168 @@ def _collect_context(findings: list[RuleFinding]) -> str | None:
 
 
 def _top_decision(findings: list[RuleFinding]) -> str | None:
-    ordered = _sort_findings(findings)
-    return ordered[0].decision if ordered else None
+    if not findings:
+        return None
+    return max(findings, key=_finding_sort_key).decision
+
+
+def _apply_severity_overrides(
+    findings: list[RuleFinding],
+    overrides: dict[str, str],
+) -> None:
+    """Mutate findings in-place to apply per-repo severity overrides."""
+    for finding in findings:
+        if finding.rule_id not in overrides:
+            continue
+        override = overrides[finding.rule_id]
+        if override.lower() == "warn":
+            finding.severity = Severity.LOW
+            finding.decision = None
+        else:
+            finding.severity = Severity.from_value(override)
+
+
+def _serialize_findings(findings: list[RuleFinding]) -> list[dict[str, object]]:
+    return [
+        {
+            "rule_id": item.rule_id,
+            "severity": item.severity.as_name(),
+            "decision": item.decision,
+            "message": item.message,
+            "additional_context": item.additional_context,
+            "metadata": item.metadata,
+        }
+        for item in findings
+    ]
+
+
+def _error_trace_payload(ctx: HookContext, platform: str, rule_id: str, exc: Exception) -> dict[str, object]:
+    """Build the trace payload dict for a rule evaluation error."""
+    return {
+        "platform": platform,
+        "event_name": ctx.event_name,
+        "session_id": ctx.session_id,
+        "tool_name": ctx.tool_name,
+        "rule_id": rule_id,
+        "error": repr(exc),
+    }
+
+
+@dataclass(slots=True)
+class _EvalAccumulator:
+    """Groups mutable state passed through the evaluation pipeline."""
+
+    findings: list[RuleFinding] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def _trace_findings(ctx: HookContext, platform: str, items: list[RuleFinding]) -> None:
+    for item in items:
+        ctx.trace.rule(
+            {
+                "platform": platform,
+                "event_name": ctx.event_name,
+                "session_id": ctx.session_id,
+                "tool_name": ctx.tool_name,
+                "rule_id": item.rule_id,
+                "severity": item.severity.as_name(),
+                "decision": item.decision,
+                "message": item.message,
+                "additional_context": item.additional_context,
+                "metadata": item.metadata,
+            }
+        )
+
+
+def _run_rule(
+    rule: Rule,
+    ctx: HookContext,
+    platform: str,
+    acc: _EvalAccumulator,
+) -> None:
+    """Evaluate a single rule, collecting findings and errors."""
+    try:
+        result = rule.evaluate(ctx)
+        if not result:
+            return
+        _apply_severity_overrides(result, ctx.config.severity_overrides)
+        acc.findings.extend(result)
+        _trace_findings(ctx, platform, result)
+    except Exception as exc:
+        acc.errors.append(f"{rule.rule_id}: {exc}")
+        ctx.trace.rule(_error_trace_payload(ctx, platform, rule.rule_id, exc))
+
+
+def _safe_enrich(
+    ctx: HookContext,
+    platform: str,
+    acc: _EvalAccumulator,
+) -> None:
+    """Run enrichment with error capture instead of silent swallow."""
+    try:
+        enrich_findings(acc.findings, ctx)
+    except Exception as exc:
+        acc.errors.append(f"enrichment: {exc}")
+        ctx.trace.rule(_error_trace_payload(ctx, platform, "ENRICHMENT", exc))
+
+
+def _run_rules(ctx: HookContext, platform: str) -> _EvalAccumulator:
+    """Build and evaluate all applicable rules."""
+    acc = _EvalAccumulator()
+    disabled = set(ctx.config.disabled_rules)
+    for rule in build_rules(ctx):
+        if rule.supports(ctx.event_name) and rule.rule_id not in disabled:
+            _run_rule(rule, ctx, platform, acc)
+    _safe_enrich(ctx, platform, acc)
+    return acc
 
 
 def render_output(
     ctx: HookContext,
     findings: list[RuleFinding],
     adapter: PlatformAdapter | None = None,
-) -> dict[str, Any] | None:
+) -> dict[str, object] | None:
     if not findings:
         return None
 
     adapter = adapter or get_adapter("claude")
-    decision = _top_decision(findings)
-    context = _collect_context(findings)
-    updated_input = _merge_updated_input(findings)
-
     return adapter.render_output(
         ctx.event_name,
         findings,
-        context=context,
-        updated_input=updated_input,
-        decision=decision,
+        context=_collect_context(findings),
+        updated_input=_merge_updated_input(findings),
+        decision=_top_decision(findings),
     )
 
 
+def _check_skip(ctx: HookContext, platform: str) -> EngineResult | None:
+    """Return an early EngineResult if the repo is disabled or skipped."""
+    repo_cwd = Path(ctx.cwd) if ctx.cwd else Path.cwd()
+    if not (is_repo_disabled(repo_cwd) or is_path_skipped(repo_cwd, ctx.config.skip_paths)):
+        return None
+    ctx.trace.result(
+        {
+            "platform": platform,
+            "event_name": ctx.event_name,
+            "session_id": ctx.session_id,
+            "skipped": True,
+            "reason": "repo disabled or path skipped",
+            "cwd": str(repo_cwd),
+        }
+    )
+    return EngineResult(event_name=ctx.event_name)
+
+
 def evaluate_payload(
-    payload_dict: dict[str, Any],
+    payload_dict: dict[str, object],
     platform: str = "claude",
 ) -> EngineResult:
     adapter = get_adapter(platform)
-    canonical = adapter.normalize_payload(payload_dict)
-    ctx = build_context(canonical)
+    ctx = build_context(adapter.normalize_payload(payload_dict))
 
-    repo_cwd = Path(ctx.cwd) if ctx.cwd else Path.cwd()
-    if is_repo_disabled(repo_cwd) or is_path_skipped(repo_cwd, ctx.config.skip_paths):
-        ctx.trace.result(
-            {
-                "platform": platform,
-                "event_name": ctx.event_name,
-                "session_id": ctx.session_id,
-                "skipped": True,
-                "reason": "repo disabled or path skipped",
-                "cwd": str(repo_cwd),
-            }
-        )
-        return EngineResult(event_name=ctx.event_name)
+    skipped = _check_skip(ctx, platform)
+    if skipped is not None:
+        return skipped
 
     ctx.trace.event(
         {
@@ -104,83 +215,23 @@ def evaluate_payload(
         }
     )
 
-    findings: list[RuleFinding] = []
-    errors: list[str] = []
+    acc = _run_rules(ctx, platform)
+    output = render_output(ctx, acc.findings, adapter=adapter)
 
-    disabled_rules = set(ctx.config.disabled_rules)
-    sev_overrides = ctx.config.severity_overrides
-
-    for rule in build_rules(ctx):
-        if not rule.supports(ctx.event_name):
-            continue
-        if rule.rule_id in disabled_rules:
-            continue
-        try:
-            result = rule.evaluate(ctx)
-            if result:
-                for finding in result:
-                    if finding.rule_id in sev_overrides:
-                        from vibeforcer.models import Severity
-                        override = sev_overrides[finding.rule_id]
-                        if override.lower() == "warn":
-                            finding.severity = Severity.LOW
-                            finding.decision = None
-                        else:
-                            finding.severity = Severity.from_value(override)
-                findings.extend(result)
-                for item in result:
-                    ctx.trace.rule(
-                        {
-                            "platform": platform,
-                            "event_name": ctx.event_name,
-                            "session_id": ctx.session_id,
-                            "tool_name": ctx.tool_name,
-                            "rule_id": item.rule_id,
-                            "severity": item.severity.as_name(),
-                            "decision": item.decision,
-                            "message": item.message,
-                            "additional_context": item.additional_context,
-                            "metadata": item.metadata,
-                        }
-                    )
-        except Exception as exc:
-            errors.append(f"{rule.rule_id}: {exc}")
-            ctx.trace.rule(
-                {
-                    "platform": platform,
-                    "event_name": ctx.event_name,
-                    "session_id": ctx.session_id,
-                    "tool_name": ctx.tool_name,
-                    "rule_id": getattr(rule, "rule_id", type(rule).__name__),
-                    "error": repr(exc),
-                }
-            )
-
-    try:
-        enrich_findings(findings, ctx)
-    except Exception:
-        pass
-
-    output = render_output(ctx, findings, adapter=adapter)
     ctx.trace.result(
         {
             "platform": platform,
             "event_name": ctx.event_name,
             "session_id": ctx.session_id,
             "tool_name": ctx.tool_name,
-            "findings": [
-                {
-                    "rule_id": item.rule_id,
-                    "severity": item.severity.as_name(),
-                    "decision": item.decision,
-                    "message": item.message,
-                    "additional_context": item.additional_context,
-                    "metadata": item.metadata,
-                }
-                for item in findings
-            ],
-            "errors": errors,
+            "findings": _serialize_findings(acc.findings),
+            "errors": acc.errors,
             "output": output,
         }
     )
-    return EngineResult(event_name=ctx.event_name, findings=findings, output=output, errors=errors)
+    return EngineResult(
+        event_name=ctx.event_name,
+        findings=acc.findings,
+        output=output,
+        errors=acc.errors,
+    )
