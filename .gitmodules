@@ -1,0 +1,3 @@
+[submodule "dashboard"]
+	path = dashboard
+	url = https://lab.baked.rocks/claude/forcedash.git
