@@ -4,8 +4,6 @@ Covers: command, path, and prompt targets to verify RegexRule routing.
 """
 from __future__ import annotations
 
-import pytest
-
 from vibeforcer.engine import evaluate_payload
 from conftest import BUNDLE_ROOT, finding_ids
 

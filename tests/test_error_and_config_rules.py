@@ -1,10 +1,6 @@
 """Tests for ERRORS-BASH-001, ERRORS-FAIL-001, and CONFIG-001 rules."""
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from vibeforcer.engine import evaluate_payload
 from conftest import BUNDLE_ROOT, finding_ids
 
