@@ -3,10 +3,12 @@
 Reads results.jsonl and produces human-readable or JSON reports.
 Replaces the standalone hook-stats.py script.
 """
+
 from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -21,7 +23,16 @@ def _default_log_path() -> Path:
     if xdg.exists():
         return xdg
 
-    legacy = Path.home() / ".claude" / "hooks" / "enforcer" / ".claude" / "hook-layer" / "logs" / "results.jsonl"
+    legacy = (
+        Path.home()
+        / ".claude"
+        / "hooks"
+        / "enforcer"
+        / ".claude"
+        / "hook-layer"
+        / "logs"
+        / "results.jsonl"
+    )
     if legacy.exists():
         return legacy
 
@@ -39,7 +50,9 @@ def _parse_timestamp(ts_raw: str, cutoff: datetime | None) -> bool:
 
 
 def load_entries(path: Path, days: int | None) -> list[dict[str, object]]:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days) if days is not None else None
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=days) if days is not None else None
+    )
     entries: list[dict[str, object]] = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -69,7 +82,9 @@ class _Counters:
     by_session: Counter[str] = field(default_factory=Counter)
     denies_by_file: Counter[str] = field(default_factory=Counter)
     denies_by_rule: Counter[str] = field(default_factory=Counter)
-    rule_examples: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
+    rule_examples: dict[str, list[str]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
     daily_counts: Counter[str] = field(default_factory=Counter)
     session_deny_seq: dict[str, list[tuple[str, str, str]]] = field(
         default_factory=lambda: defaultdict(list),
@@ -124,7 +139,9 @@ def _process_finding(
     return True
 
 
-def _classify_findings(findings: list[object], ectx: _EntryContext, counters: _Counters) -> None:
+def _classify_findings(
+    findings: list[object], ectx: _EntryContext, counters: _Counters
+) -> None:
     """Process all findings and record an entry-level allow when nothing fired."""
     has_deny = False
     has_any_decision = False
@@ -253,14 +270,29 @@ def _print_denied_files(stats: dict[str, object]) -> None:
         print(f"  {count:4,}  {short}")
 
 
+def _print_pairs_section(
+    title: str,
+    pairs: _PairList,
+    formatter: Callable[[str, int], str],
+    empty_message: str | None = None,
+) -> None:
+    print(f"\n--- {title} ---")
+    if pairs:
+        for label, count in pairs:
+            print(formatter(label, count))
+    elif empty_message is not None:
+        print(f"  {empty_message}")
+    print()
+
+
 def _print_retry_patterns(stats: dict[str, object]) -> None:
-    print("\n--- Retry Patterns (same rule denied 2+ in one session) ---")
     patterns = _pairs(stats, "retry_patterns")
-    if patterns:
-        for desc, count in patterns:
-            print(f"  {count:3,}x  {desc}")
-    else:
-        print("  (none detected)")
+    _print_pairs_section(
+        title="Retry Patterns (same rule denied 2+ in one session)",
+        pairs=patterns,
+        formatter=lambda desc, count: f"  {count:3,}x  {desc}",
+        empty_message="(none detected)",
+    )
 
 
 def _print_daily_volume(stats: dict[str, object]) -> None:
@@ -271,10 +303,11 @@ def _print_daily_volume(stats: dict[str, object]) -> None:
 
 
 def _print_severity(stats: dict[str, object]) -> None:
-    print("\n--- Severity Breakdown ---")
-    for sev, count in _pairs(stats, "by_severity"):
-        print(f"  {sev:10s} {count:6,}")
-    print()
+    _print_pairs_section(
+        title="Severity Breakdown",
+        pairs=_pairs(stats, "by_severity"),
+        formatter=lambda sev, count: f"  {sev:10s} {count:6,}",
+    )
 
 
 def run_stats(

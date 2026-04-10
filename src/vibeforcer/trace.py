@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from vibeforcer.util import warning
+
 
 def _make_record(payload: dict[str, object]) -> str:
     """Build a timestamped JSON line from a payload dict."""
@@ -26,7 +28,8 @@ class TraceWriter:
         try:
             with target.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
-        except OSError:
+        except OSError as exc:
+            warning("trace write failed", path=str(target), error=str(exc))
             return
 
     def event(self, payload: dict[str, object]) -> None:

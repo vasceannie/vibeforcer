@@ -8,8 +8,28 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vibeforcer.constants import ENRICHMENT_MAX_READ_BYTES
+
+if TYPE_CHECKING:
+    from vibeforcer.context import HookContext
+    from vibeforcer.models import RuleFinding
+
+
+def _append_enrichment_message(finding: "RuleFinding", lines: list[str]) -> None:
+    """Append enrichment lines to a finding message."""
+    if not lines:
+        return
+    base_message = finding.message or ""
+    finding.message = base_message.rstrip() + "\n" + "\n".join(lines)
+
+
+def _first_target_content(ctx: "HookContext") -> str:
+    """Return the content of the first target, if available."""
+    for target in ctx.content_targets:
+        return target.content
+    return ""
 
 
 def _safe_read(path: Path, max_bytes: int = ENRICHMENT_MAX_READ_BYTES) -> str:
@@ -38,10 +58,9 @@ def _resolve_path(path_str: str, root: Path) -> Path:
     return (root / path).resolve()
 
 
-def _is_under(path: Path, root: Path) -> bool:
-    """Return ``True`` if ``path`` is inside ``root``."""
+def _relative_path(path: Path, root: Path) -> str:
+    """Return a path relative to root when possible."""
     try:
-        path.relative_to(root)
-        return True
+        return str(path.relative_to(root))
     except ValueError:
-        return False
+        return str(path)

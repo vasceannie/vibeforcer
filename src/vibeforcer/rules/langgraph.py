@@ -109,22 +109,26 @@ def _iter_langgraph_sources(
 
 def _is_typed_dict_base(base: ast.expr) -> bool:
     """Check if an AST base class node refers to TypedDict."""
-    if isinstance(base, ast.Name) and base.id == "TypedDict":
-        return True
-    if isinstance(base, ast.Attribute) and base.attr == "TypedDict":
-        return True
-    if isinstance(base, ast.Call) and isinstance(base.func, ast.Name):
-        return base.func.id == "TypedDict"
-    return False
+    match base:
+        case ast.Name(id="TypedDict"):
+            return True
+        case ast.Attribute(attr="TypedDict"):
+            return True
+        case ast.Call(func=ast.Name(id="TypedDict")):
+            return True
+        case _:
+            return False
 
 
 def _is_bare_list_annotation(ann: ast.expr) -> bool:
     """Return True if annotation is a bare ``list`` or ``list[X]``."""
-    if isinstance(ann, ast.Name) and ann.id == "list":
-        return True
-    if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
-        return ann.value.id == "list"
-    return False
+    match ann:
+        case ast.Name(id="list"):
+            return True
+        case ast.Subscript(value=ast.Name(id="list")):
+            return True
+        case _:
+            return False
 
 
 def _is_annotated_wrapper(ann: ast.expr) -> bool:

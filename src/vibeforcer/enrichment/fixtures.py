@@ -12,7 +12,7 @@ from vibeforcer.constants import (
     ENRICHMENT_MAX_PARAMETRIZE_EXAMPLES,
     ENRICHMENT_MAX_PARAMETRIZE_SNIPPET,
 )
-from vibeforcer.enrichment._helpers import _is_under, _safe_parse, _safe_read
+from vibeforcer.enrichment._helpers import _safe_parse, _safe_read
 from vibeforcer.enrichment._types import FixtureInfo, ParametrizeExample
 
 
@@ -58,8 +58,12 @@ def _iter_conftest_paths(start_dir: Path, root: Path) -> list[Path]:
     current = start_dir
     for _ in range(ENRICHMENT_FIXTURE_PARENT_DEPTH):
         conftest = current / "conftest.py"
-        if conftest.exists() and _is_under(conftest, root):
-            paths.append(conftest)
+        if conftest.exists():
+            try:
+                conftest.relative_to(root)
+                paths.append(conftest)
+            except ValueError:
+                pass
         if current == root or current.parent == current:
             break
         current = current.parent

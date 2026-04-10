@@ -3,6 +3,7 @@
 Cyclomatic complexity, long methods, deep nesting, too many parameters,
 oversized modules, and god classes.
 """
+
 from __future__ import annotations
 
 import ast
@@ -46,7 +47,9 @@ def _complexity(node: ast.AST) -> int:
                 count += len(child.values) - 1
             else:
                 count += 1
-        elif isinstance(child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        elif isinstance(
+            child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
             count += len(child.generators)
     return count
 
@@ -80,6 +83,7 @@ def detect_high_complexity(files: list[Path] | None = None) -> list[Violation]:
 # Long methods
 # ---------------------------------------------------------------------------
 
+
 def detect_long_methods(files: list[Path] | None = None) -> list[Violation]:
     """Find functions/methods exceeding the configured line-count threshold."""
     cfg = get_config()
@@ -109,6 +113,7 @@ def detect_long_methods(files: list[Path] | None = None) -> list[Violation]:
 # Too many parameters
 # ---------------------------------------------------------------------------
 
+
 def detect_too_many_params(files: list[Path] | None = None) -> list[Violation]:
     """Find functions/methods with more parameters than the configured limit."""
     cfg = get_config()
@@ -122,7 +127,9 @@ def detect_too_many_params(files: list[Path] | None = None) -> list[Violation]:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 args = node.args
-                param_count = len(args.args) + len(args.posonlyargs) + len(args.kwonlyargs)
+                param_count = (
+                    len(args.args) + len(args.posonlyargs) + len(args.kwonlyargs)
+                )
                 # Subtract 'self' / 'cls'
                 if args.args and args.args[0].arg in ("self", "cls"):
                     param_count -= 1
@@ -142,15 +149,24 @@ def detect_too_many_params(files: list[Path] | None = None) -> list[Violation]:
 # Deep nesting
 # ---------------------------------------------------------------------------
 
+
 def _max_nesting(node: ast.AST, current: int = 0) -> int:
     """Return the deepest nesting level inside *node*."""
-    deepest = current
     nesting_types = (ast.If, ast.For, ast.While, ast.With, ast.Try, ast.ExceptHandler)
+    deepest = current
+    stack: list[tuple[ast.AST, int]] = []
+
     for child in ast.iter_child_nodes(node):
-        if isinstance(child, nesting_types):
-            deepest = max(deepest, _max_nesting(child, current + 1))
-        else:
-            deepest = max(deepest, _max_nesting(child, current))
+        next_depth = current + 1 if isinstance(child, nesting_types) else current
+        stack.append((child, next_depth))
+
+    while stack:
+        current_node, depth = stack.pop()
+        deepest = max(deepest, depth)
+        for child in ast.iter_child_nodes(current_node):
+            next_depth = depth + 1 if isinstance(child, nesting_types) else depth
+            stack.append((child, next_depth))
+
     return deepest
 
 
@@ -182,6 +198,7 @@ def detect_deep_nesting(files: list[Path] | None = None) -> list[Violation]:
 # ---------------------------------------------------------------------------
 # Oversized modules
 # ---------------------------------------------------------------------------
+
 
 def detect_oversized_modules(files: list[Path] | None = None) -> list[Violation]:
     """Flag modules exceeding the soft or hard line-count thresholds."""
@@ -216,6 +233,7 @@ def detect_oversized_modules(files: list[Path] | None = None) -> list[Violation]
 # ---------------------------------------------------------------------------
 # God classes
 # ---------------------------------------------------------------------------
+
 
 def detect_god_classes(files: list[Path] | None = None) -> list[Violation]:
     """Find classes with too many methods or too many lines."""

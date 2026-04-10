@@ -1,10 +1,12 @@
 """Base adapter protocol for platform-specific input/output translation."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any
 
 from vibeforcer.models import RuleFinding
+from vibeforcer.rules.base import join_messages as _join_messages
 
 
 class PlatformAdapter(ABC):
@@ -26,15 +28,7 @@ class PlatformAdapter(ABC):
     ) -> dict[str, Any] | None:
         """Render findings into platform-native JSON for stdout."""
 
-    @staticmethod
-    def join_messages(findings: list[RuleFinding]) -> str:
-        lines: list[str] = []
-        for finding in findings:
-            if finding.message:
-                lines.append(
-                    f"[{finding.rule_id} | {finding.severity.as_name()}] {finding.message}"
-                )
-        return "\n".join(lines)
+    join_messages = staticmethod(_join_messages)
 
     @staticmethod
     def decision_findings(

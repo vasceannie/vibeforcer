@@ -9,12 +9,14 @@ The enrichment pipeline runs *after* rule evaluation and *before* output
 rendering, so it augments both ``message`` (all platforms) and
 ``additional_context`` (Claude Code bonus channel).
 """
+
 from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, cast
 
 if TYPE_CHECKING:
     from vibeforcer.context import HookContext
@@ -24,6 +26,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _safe_read(path: Path, max_bytes: int = 100_000) -> str:
     """Read a file, returning empty string on any error."""
@@ -56,6 +59,7 @@ def _resolve_path(path_str: str, root: Path) -> Path:
 # Fixture discovery
 # ---------------------------------------------------------------------------
 
+
 def _discover_fixtures(test_path: Path, root: Path) -> list[dict]:
     """Walk up from test_path finding conftest.py fixtures.
 
@@ -68,22 +72,16 @@ def _discover_fixtures(test_path: Path, root: Path) -> list[dict]:
     for _ in range(10):  # depth limit
         conftest = current / "conftest.py"
         if conftest.exists():
-            source = _safe_read(conftest)
-            if source:
-                tree = _safe_parse(source)
-                if tree:
-                    rel = str(conftest.relative_to(root)) if _is_under(conftest, root) else str(conftest)
-                    for node in ast.walk(tree):
-                        if len(fixtures) >= 10:
-                            break
-                        if isinstance(node, ast.FunctionDef) and _has_fixture_decorator(node):
-                            if node.name not in seen_names:
-                                seen_names.add(node.name)
-                                fixtures.append({
-                                    "name": node.name,
-                                    "conftest": rel,
-                                    "has_params": _fixture_has_params(node),
-                                })
+            remaining = 10 - len(fixtures)
+            if remaining > 0:
+                fixtures.extend(
+                    _collect_fixtures_from_conftest(
+                        conftest=conftest,
+                        root=root,
+                        seen_names=seen_names,
+                        max_items=remaining,
+                    )
+                )
         if len(fixtures) >= 10:
             break
         if current == root or current == current.parent:
@@ -93,20 +91,65 @@ def _discover_fixtures(test_path: Path, root: Path) -> list[dict]:
     return fixtures
 
 
+def _collect_fixtures_from_conftest(
+    *,
+    conftest: Path,
+    root: Path,
+    seen_names: set[str],
+    max_items: int,
+) -> list[dict]:
+    source = _safe_read(conftest)
+    if not source:
+        return []
+    tree = _safe_parse(source)
+    if not tree:
+        return []
+
+    rel = (
+        str(conftest.relative_to(root)) if _is_under(conftest, root) else str(conftest)
+    )
+    discovered: list[dict] = []
+    for node in ast.walk(tree):
+        if len(discovered) >= max_items:
+            break
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if not _has_fixture_decorator(node):
+            continue
+        if node.name in seen_names:
+            continue
+
+        seen_names.add(node.name)
+        discovered.append(
+            {
+                "name": node.name,
+                "conftest": rel,
+                "has_params": _fixture_has_params(node),
+            }
+        )
+    return discovered
+
+
+def _is_fixture_attr(node: ast.expr) -> bool:
+    return isinstance(node, ast.Attribute) and node.attr == "fixture"
+
+
+def _is_fixture_name(node: ast.expr) -> bool:
+    return isinstance(node, ast.Name) and node.id == "fixture"
+
+
+def _is_fixture_decorator(node: ast.expr) -> bool:
+    if _is_fixture_attr(node) or _is_fixture_name(node):
+        return True
+    if not isinstance(node, ast.Call):
+        return False
+    return _is_fixture_attr(node.func) or _is_fixture_name(node.func)
+
+
 def _has_fixture_decorator(node: ast.FunctionDef) -> bool:
     """Check if a function has @pytest.fixture decorator."""
     for dec in node.decorator_list:
-        # @pytest.fixture or @pytest.fixture(...)
-        if isinstance(dec, ast.Attribute) and dec.attr == "fixture":
-            return True
-        if isinstance(dec, ast.Call):
-            func = dec.func
-            if isinstance(func, ast.Attribute) and func.attr == "fixture":
-                return True
-        # bare @fixture (from `from pytest import fixture`)
-        if isinstance(dec, ast.Name) and dec.id == "fixture":
-            return True
-        if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name) and dec.func.id == "fixture":
+        if _is_fixture_decorator(dec):
             return True
     return False
 
@@ -130,6 +173,13 @@ def _is_under(path: Path, root: Path) -> bool:
         return False
 
 
+def _append_enrichment_message(finding: "RuleFinding", lines: list[str]) -> None:
+    if not lines:
+        return
+    base_message = finding.message or ""
+    finding.message = base_message.rstrip() + "\n" + "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Parametrize example discovery
 # ---------------------------------------------------------------------------
@@ -140,7 +190,9 @@ _PARAMETRIZE_RE = re.compile(
 )
 
 
-def _find_parametrize_examples(test_path: Path, root: Path, max_examples: int = 3) -> list[dict]:
+def _find_parametrize_examples(
+    test_path: Path, _root: Path, max_examples: int = 3
+) -> list[dict]:
     """Find @pytest.mark.parametrize usage in sibling test files.
 
     Returns list of {file, snippet} dicts.
@@ -178,21 +230,9 @@ def _find_parametrize_examples(test_path: Path, root: Path, max_examples: int = 
     return examples
 
 
-# ---------------------------------------------------------------------------
-# Enrichment strategies per rule prefix
-# ---------------------------------------------------------------------------
-
-def _enrich_test_loop(finding: "RuleFinding", ctx: "HookContext") -> None:
-    """Enrich PY-TEST-003 with fixture discovery and parametrize examples."""
-    paths = finding.metadata.get("hits", [])
-    if not paths:
-        return
-
-    test_path = _resolve_path(paths[0], ctx.config.root)
-    fixtures = _discover_fixtures(test_path, ctx.config.root)
-    examples = _find_parametrize_examples(test_path, ctx.config.root)
-
-    # Build enrichment for message (ALL platforms see this)
+def _build_test_loop_message_extras(
+    fixtures: list[dict], examples: list[dict]
+) -> list[str]:
     extras: list[str] = []
 
     if fixtures:
@@ -212,25 +252,29 @@ def _enrich_test_loop(finding: "RuleFinding", ctx: "HookContext") -> None:
     if examples:
         extras.append("\nExisting parametrize patterns in sibling tests:")
         for ex in examples[:2]:
-            # Indent the snippet
             indented = "\n".join(f"    {line}" for line in ex["snippet"].splitlines())
             extras.append(f"  # From {ex['file']}:\n{indented}")
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    return extras
 
-    # Build bonus context for Claude Code (additional_context channel)
+
+def _build_test_loop_context_parts(
+    fixtures: list[dict], examples: list[dict]
+) -> list[str]:
     context_parts: list[str] = []
+
     if fixtures:
         context_parts.append("AVAILABLE FIXTURES:")
-        for f in fixtures:
-            param_note = " (parametrized)" if f["has_params"] else ""
-            context_parts.append(f"  • {f['name']}{param_note}  — from {f['conftest']}")
+        for fixture in fixtures:
+            param_note = " (parametrized)" if fixture["has_params"] else ""
+            context_parts.append(
+                f"  • {fixture['name']}{param_note}  — from {fixture['conftest']}"
+            )
 
     if examples:
         context_parts.append("\nEXISTING PARAMETRIZE PATTERNS IN THIS DIRECTORY:")
-        for ex in examples:
-            context_parts.append(f"  # {ex['file']}:\n{ex['snippet']}")
+        for example in examples:
+            context_parts.append(f"  # {example['file']}:\n{example['snippet']}")
 
     context_parts.append(
         "\nCOMPLIANT ALTERNATIVES:\n"
@@ -246,9 +290,34 @@ def _enrich_test_loop(finding: "RuleFinding", ctx: "HookContext") -> None:
         "     def input_val(request): return request.param"
     )
 
+    return context_parts
+
+
+# ---------------------------------------------------------------------------
+# Enrichment strategies per rule prefix
+# ---------------------------------------------------------------------------
+
+
+def _enrich_test_loop(finding: "RuleFinding", ctx: "HookContext") -> None:
+    """Enrich PY-TEST-003 with fixture discovery and parametrize examples."""
+    paths = finding.metadata.get("hits", [])
+    if not paths:
+        return
+
+    test_path = _resolve_path(paths[0], ctx.config.root)
+    fixtures = _discover_fixtures(test_path, ctx.config.root)
+    examples = _find_parametrize_examples(test_path, ctx.config.root)
+
+    _append_enrichment_message(
+        finding, _build_test_loop_message_extras(fixtures, examples)
+    )
+
+    context_parts = _build_test_loop_context_parts(fixtures, examples)
     if context_parts:
         existing = finding.additional_context or ""
-        finding.additional_context = (existing + "\n\n" + "\n".join(context_parts)).strip()
+        finding.additional_context = (
+            existing + "\n\n" + "\n".join(context_parts)
+        ).strip()
 
 
 def _enrich_assertion_roulette(finding: "RuleFinding", ctx: "HookContext") -> None:
@@ -271,8 +340,7 @@ def _enrich_assertion_roulette(finding: "RuleFinding", ctx: "HookContext") -> No
         "splitting into focused test functions (one concept per test)."
     )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
 
 
 def _enrich_test_smells(finding: "RuleFinding", ctx: "HookContext") -> None:
@@ -312,11 +380,12 @@ def _enrich_test_smells(finding: "RuleFinding", ctx: "HookContext") -> None:
             "prefer these over time.sleep() for test timing."
         )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
 
 
-def _enrich_fixture_outside_conftest(finding: "RuleFinding", ctx: "HookContext") -> None:
+def _enrich_fixture_outside_conftest(
+    finding: "RuleFinding", ctx: "HookContext"
+) -> None:
     """Enrich PY-TEST-004 with the nearest conftest.py path."""
     paths = finding.metadata.get("hits", [])
     if not paths:
@@ -333,54 +402,149 @@ def _enrich_fixture_outside_conftest(finding: "RuleFinding", ctx: "HookContext")
         if fixtures:
             names = ", ".join(f"`{f['name']}`" for f in fixtures[:6])
             extras.append(f"\nExisting fixtures in conftest.py: {names}")
-        extras.append(f"\nMove the fixture to: {conftest.relative_to(ctx.config.root) if _is_under(conftest, ctx.config.root) else conftest}")
+        extras.append(
+            f"\nMove the fixture to: {conftest.relative_to(ctx.config.root) if _is_under(conftest, ctx.config.root) else conftest}"
+        )
     else:
         extras.append(
             f"\nNo conftest.py exists yet in {test_dir.relative_to(ctx.config.root) if _is_under(test_dir, ctx.config.root) else test_dir}/. "
             "Create one and define the fixture there."
         )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
+
+
+def _first_content_target(content_targets: Sequence[object]) -> str:
+    """Return the first available target's content string."""
+    for target in content_targets:
+        return getattr(target, "content", "")
+    return ""
+
+
+def _typedict_tip() -> str:
+    return (
+        "\nTIP: For dict-like structures, consider TypedDict:\n"
+        "    class UserData(TypedDict):\n"
+        "        name: str\n"
+        "        email: str"
+    )
+
+
+def _callable_tip() -> str:
+    return (
+        "\nTIP: For callbacks/handlers, use Callable with specific signatures:\n"
+        "    Callable[[str, int], bool]"
+    )
+
+
+def _protocol_tip() -> str:
+    return (
+        "\nTIP: For duck-typed interfaces, define a Protocol:\n"
+        "    class Readable(Protocol):\n"
+        "        def read(self, n: int = -1) -> bytes: ..."
+    )
+
+
+def _python_any_suggestions(content_hint: str) -> list[str]:
+    lower = content_hint.lower()
+    extras: list[str] = []
+    if "dict" in lower or "mapping" in lower:
+        extras.append(_typedict_tip())
+    if "def " in lower and any(
+        token in lower for token in ("callback", "callable", "func", "handler")
+    ):
+        extras.append(_callable_tip())
+    if "class " in lower and ("__getattr__" in lower or "__getitem__" in lower):
+        extras.append(_protocol_tip())
+    return extras
 
 
 def _enrich_python_any(finding: "RuleFinding", ctx: "HookContext") -> None:
     """Enrich PY-TYPE-001 with nearby type pattern hints."""
-    # For type violations, suggest Protocol/TypedDict based on content
-    content_hint = ""
-    for ct in ctx.content_targets:
-        content_hint = ct.content
-        break
-
-    extras: list[str] = []
-    if content_hint:
-        lower = content_hint.lower()
-        if "dict" in lower or "mapping" in lower:
-            extras.append(
-                "\nTIP: For dict-like structures, consider TypedDict:\n"
-                "    class UserData(TypedDict):\n"
-                "        name: str\n"
-                "        email: str"
-            )
-        if "def " in lower and ("callback" in lower or "callable" in lower or "func" in lower or "handler" in lower):
-            extras.append(
-                "\nTIP: For callbacks/handlers, use Callable with specific signatures:\n"
-                "    Callable[[str, int], bool]"
-            )
-        if "class " in lower and ("__getattr__" in lower or "__getitem__" in lower):
-            extras.append(
-                "\nTIP: For duck-typed interfaces, define a Protocol:\n"
-                "    class Readable(Protocol):\n"
-                "        def read(self, n: int = -1) -> bytes: ..."
-            )
-
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    content_hint = _first_content_target(ctx.content_targets)
+    extras = _python_any_suggestions(content_hint)
+    _append_enrichment_message(finding, extras)
 
 
 # ---------------------------------------------------------------------------
 # AST code quality enrichers (PY-CODE-*)
 # ---------------------------------------------------------------------------
+
+
+def _enrich_long_method(finding: "RuleFinding", ctx: "HookContext") -> None:
+    """Enrich PY-CODE-008 with function structure to suggest split points."""
+    path_str = finding.metadata.get("path", "")
+    func_name = finding.metadata.get("function", "")
+    source = _read_and_parse_source(path_str, ctx.config.root)
+    if not source:
+        return
+    tree, full_path = source
+    node = _find_function_node(tree, func_name)
+    if not node or not full_path:
+        return
+    extras = _build_long_method_extras(node, full_path)
+    _append_enrichment_message(finding, extras)
+
+
+def _find_function_node(
+    tree: ast.Module, func_name: str
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == func_name
+        ):
+            return node
+    return None
+
+
+def _collect_long_method_blocks(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[str]:
+    blocks: list[str] = []
+    for child in node.body:
+        if isinstance(child, ast.If):
+            blocks.append(f"  • if-block at line {child.lineno}")
+        elif isinstance(child, (ast.For, ast.AsyncFor)):
+            blocks.append(f"  • loop at line {child.lineno}")
+        elif isinstance(child, ast.With):
+            blocks.append(f"  • with-block at line {child.lineno}")
+        elif isinstance(child, ast.Try):
+            blocks.append(f"  • try-block at line {child.lineno}")
+    return blocks
+
+
+def _collect_nested_function_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[str]:
+    return [
+        child.name
+        for child in ast.iter_child_nodes(node)
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+
+
+def _build_long_method_extras(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    full_path: Path,
+) -> list[str]:
+    # Keep behavior parity; return only the legacy message payload.
+    _ = full_path
+    blocks = _collect_long_method_blocks(node)
+    nested = _collect_nested_function_names(node)
+    extras: list[str] = []
+
+    if blocks:
+        extras.append("\nFunction structure (potential extraction points):")
+        extras.extend(blocks[:8])
+    if nested:
+        extras.append(f"\nNested functions: {', '.join(f'`{n}`' for n in nested[:5])}")
+    extras.append(
+        "\nSplit strategy: extract each logical block into a named helper "
+        "that does one thing. The parent function becomes an orchestrator."
+    )
+    return extras
+
 
 def _enrich_long_method(finding: "RuleFinding", ctx: "HookContext") -> None:
     """Enrich PY-CODE-008 with function structure to suggest split points."""
@@ -399,43 +563,11 @@ def _enrich_long_method(finding: "RuleFinding", ctx: "HookContext") -> None:
         return
 
     # Find the function and analyze its structure
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
-            # Collect top-level blocks to suggest extraction
-            blocks: list[str] = []
-            for child in node.body:
-                if isinstance(child, ast.If):
-                    blocks.append(f"  • if-block at line {child.lineno}")
-                elif isinstance(child, (ast.For, ast.AsyncFor)):
-                    blocks.append(f"  • loop at line {child.lineno}")
-                elif isinstance(child, ast.With):
-                    blocks.append(f"  • with-block at line {child.lineno}")
-                elif isinstance(child, ast.Try):
-                    blocks.append(f"  • try-block at line {child.lineno}")
-
-            # Count nested functions that could be extracted
-            nested = [
-                n.name for n in ast.iter_child_nodes(node)
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-            ]
-
-            extras: list[str] = []
-            if blocks:
-                extras.append("\nFunction structure (potential extraction points):")
-                extras.extend(blocks[:8])
-
-            if nested:
-                extras.append(f"\nNested functions: {', '.join(f'`{n}`' for n in nested[:5])}")
-
-            # Suggest extraction pattern
-            extras.append(
-                "\nSplit strategy: extract each logical block into a named helper "
-                "that does one thing. The parent function becomes an orchestrator."
-            )
-
-            if extras:
-                finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
-            break
+    node = _find_function_node(tree=tree, func_name=func_name)
+    if node is None:
+        return
+    extras = _build_long_method_extras(node, full_path)
+    _append_enrichment_message(finding, extras)
 
 
 def _enrich_long_params(finding: "RuleFinding", ctx: "HookContext") -> None:
@@ -456,21 +588,31 @@ def _enrich_long_params(finding: "RuleFinding", ctx: "HookContext") -> None:
 
     # Find the function and list its params
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
-            args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == func_name
+        ):
+            args = (
+                list(node.args.posonlyargs)
+                + list(node.args.args)
+                + list(node.args.kwonlyargs)
+            )
             param_names = [a.arg for a in args if a.arg not in ("self", "cls")]
 
             extras: list[str] = []
             if param_names:
-                extras.append(f"\nParameters: {', '.join(f'`{p}`' for p in param_names)}")
+                extras.append(
+                    f"\nParameters: {', '.join(f'`{p}`' for p in param_names)}"
+                )
 
             # Look for existing dataclass/TypedDict/NamedTuple in the same file
             grouped_types: list[str] = []
             for other in ast.walk(tree):
                 if isinstance(other, ast.ClassDef):
                     for dec in other.decorator_list:
-                        if (isinstance(dec, ast.Name) and dec.id == "dataclass") or \
-                           (isinstance(dec, ast.Attribute) and dec.attr == "dataclass"):
+                        if (isinstance(dec, ast.Name) and dec.id == "dataclass") or (
+                            isinstance(dec, ast.Attribute) and dec.attr == "dataclass"
+                        ):
                             grouped_types.append(f"`{other.name}` (dataclass)")
                             break
                     # Check for TypedDict / NamedTuple bases
@@ -498,8 +640,7 @@ def _enrich_long_params(finding: "RuleFinding", ctx: "HookContext") -> None:
                 "        param_c: bool = True"
             )
 
-            if extras:
-                finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+            _append_enrichment_message(finding, extras)
             break
 
 
@@ -520,7 +661,10 @@ def _enrich_cyclomatic_complexity(finding: "RuleFinding", ctx: "HookContext") ->
         return
 
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == func_name
+        ):
             # Count complexity sources
             ifs = 0
             loops = 0
@@ -561,8 +705,7 @@ def _enrich_cyclomatic_complexity(finding: "RuleFinding", ctx: "HookContext") ->
                     "\nTIP: Multiple loops → extract each loop body into a named function."
                 )
 
-            if extras:
-                finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+            _append_enrichment_message(finding, extras)
             break
 
 
@@ -584,17 +727,18 @@ def _enrich_feature_envy(finding: "RuleFinding", ctx: "HookContext") -> None:
     # Check if the envied object's type is defined in the same file
     tree = _safe_parse(source)
     if tree:
-        local_classes = [
-            n.name for n in ast.walk(tree)
-            if isinstance(n, ast.ClassDef)
-        ]
+        local_classes = [n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
         if local_classes:
-            extras.append(f"\nClasses in this file: {', '.join(f'`{c}`' for c in local_classes[:5])}")
+            extras.append(
+                f"\nClasses in this file: {', '.join(f'`{c}`' for c in local_classes[:5])}"
+            )
 
     # Check imports to find where the envied type might live
     for line in source.splitlines()[:50]:
         stripped = line.strip()
-        if envied in stripped and (stripped.startswith("from ") or stripped.startswith("import ")):
+        if envied in stripped and (
+            stripped.startswith("from ") or stripped.startswith("import ")
+        ):
             extras.append(f"\nImport of `{envied}`: `{stripped}`")
             break
 
@@ -603,15 +747,13 @@ def _enrich_feature_envy(finding: "RuleFinding", ctx: "HookContext") -> None:
         f"or restructuring so `{envied}` exposes a higher-level API."
     )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
 
 
 def _enrich_thin_wrapper(finding: "RuleFinding", ctx: "HookContext") -> None:
     """Enrich PY-CODE-013 with the actual wrapped call for easy inlining."""
     meta = finding.metadata
     func_name = meta.get("function", "")
-    wraps = meta.get("wraps", "")
     path_str = meta.get("path", "")
     if not func_name or not path_str:
         return
@@ -627,7 +769,9 @@ def _enrich_thin_wrapper(finding: "RuleFinding", ctx: "HookContext") -> None:
     call_count = source.count(f"{func_name}(")
     if call_count > 1:
         # subtract the definition itself
-        extras.append(f"\n`{func_name}` is called ~{call_count - 1} time(s) in this file.")
+        extras.append(
+            f"\n`{func_name}` is called ~{call_count - 1} time(s) in this file."
+        )
         extras.append(
             f"Replace each `{func_name}(...)` call with a direct call to the wrapped "
             f"function, then remove the wrapper."
@@ -638,13 +782,13 @@ def _enrich_thin_wrapper(finding: "RuleFinding", ctx: "HookContext") -> None:
             f"Search for all usages before inlining."
         )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
 
 
 # ---------------------------------------------------------------------------
 # Regex rule enrichers (PY-EXC-*, PY-LOG-*, PY-QUALITY-*)
 # ---------------------------------------------------------------------------
+
 
 def _enrich_silent_except(finding: "RuleFinding", ctx: "HookContext") -> None:
     """Enrich PY-EXC-002 with specific exception types to catch."""
@@ -675,7 +819,9 @@ def _enrich_silent_except(finding: "RuleFinding", ctx: "HookContext") -> None:
                                 called_funcs.append(child.func.attr)
             if called_funcs:
                 unique = list(dict.fromkeys(called_funcs))[:5]
-                extras.append(f"\nFunctions called in try block: {', '.join(f'`{f}`' for f in unique)}")
+                extras.append(
+                    f"\nFunctions called in try block: {', '.join(f'`{f}`' for f in unique)}"
+                )
                 extras.append(
                     "Check what exceptions these functions raise and catch those specifically."
                 )
@@ -688,8 +834,7 @@ def _enrich_silent_except(finding: "RuleFinding", ctx: "HookContext") -> None:
         "  • Encoding: `UnicodeDecodeError`, `UnicodeEncodeError`"
     )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
 
 
 def _enrich_stdlib_logger(finding: "RuleFinding", ctx: "HookContext") -> None:
@@ -724,22 +869,36 @@ def _enrich_stdlib_logger(finding: "RuleFinding", ctx: "HookContext") -> None:
     if log_libs:
         extras.append(f"\nProject uses: {', '.join(log_libs)}")
         if "structlog" in log_libs:
-            extras.append("  Import with: `import structlog; logger = structlog.get_logger()`")
+            extras.append(
+                "  Import with: `import structlog; logger = structlog.get_logger()`"
+            )
         if "loguru" in log_libs:
             extras.append("  Import with: `from loguru import logger`")
 
     # Check for project logger module
     for candidate in candidates:
         if candidate.exists():
-            rel = str(candidate.relative_to(root)) if _is_under(candidate, root) else str(candidate)
+            rel = (
+                str(candidate.relative_to(root))
+                if _is_under(candidate, root)
+                else str(candidate)
+            )
             extras.append(f"\nProject logger found at: `{rel}`")
             # Try to find the import pattern
             content = _safe_read(candidate, max_bytes=5_000)
             if content:
                 for line in content.splitlines()[:30]:
                     stripped = line.strip()
-                    if "get_logger" in stripped or "getLogger" in stripped or "logger" in stripped.lower():
-                        if stripped.startswith("def ") or stripped.startswith("class ") or "=" in stripped:
+                    if (
+                        "get_logger" in stripped
+                        or "getLogger" in stripped
+                        or "logger" in stripped.lower()
+                    ):
+                        if (
+                            stripped.startswith("def ")
+                            or stripped.startswith("class ")
+                            or "=" in stripped
+                        ):
                             extras.append(f"  Pattern: `{stripped[:100]}`")
                             break
             break
@@ -750,8 +909,7 @@ def _enrich_stdlib_logger(finding: "RuleFinding", ctx: "HookContext") -> None:
             "or use structlog/loguru instead of stdlib logging."
         )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
 
 
 def _enrich_type_suppression(finding: "RuleFinding", ctx: "HookContext") -> None:
@@ -793,20 +951,31 @@ def _enrich_type_suppression(finding: "RuleFinding", ctx: "HookContext") -> None
     # Give specific fix advice based on the error code
     for s in suppressions:
         if "arg-type" in s:
-            extras.append("  → `arg-type`: The argument type doesn't match. Add an overload or cast.")
+            extras.append(
+                "  → `arg-type`: The argument type doesn't match. Add an overload or cast."
+            )
         elif "return-value" in s:
-            extras.append("  → `return-value`: Narrow the return type or add a type guard.")
+            extras.append(
+                "  → `return-value`: Narrow the return type or add a type guard."
+            )
         elif "assignment" in s:
-            extras.append("  → `assignment`: Use a wider type annotation or restructure the code.")
+            extras.append(
+                "  → `assignment`: Use a wider type annotation or restructure the code."
+            )
         elif "union-attr" in s:
-            extras.append("  → `union-attr`: Narrow the union with isinstance() before accessing the attribute.")
+            extras.append(
+                "  → `union-attr`: Narrow the union with isinstance() before accessing the attribute."
+            )
         elif "override" in s:
-            extras.append("  → `override`: Match the parent's signature exactly or use covariant return types.")
+            extras.append(
+                "  → `override`: Match the parent's signature exactly or use covariant return types."
+            )
         elif "no-untyped-def" in s:
-            extras.append("  → `no-untyped-def`: Add type annotations to all parameters and return type.")
+            extras.append(
+                "  → `no-untyped-def`: Add type annotations to all parameters and return type."
+            )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
 
 
 def _enrich_magic_numbers(finding: "RuleFinding", ctx: "HookContext") -> None:
@@ -824,7 +993,11 @@ def _enrich_magic_numbers(finding: "RuleFinding", ctx: "HookContext") -> None:
             for name in ("constants.py", "config.py", "settings.py", "defaults.py"):
                 candidate = search_dir / name
                 if candidate.exists() and candidate != file_path:
-                    rel = str(candidate.relative_to(root)) if _is_under(candidate, root) else str(candidate)
+                    rel = (
+                        str(candidate.relative_to(root))
+                        if _is_under(candidate, root)
+                        else str(candidate)
+                    )
                     extras.append(f"\nDefine constants in: `{rel}`")
                     break
             if extras:
@@ -838,8 +1011,7 @@ def _enrich_magic_numbers(finding: "RuleFinding", ctx: "HookContext") -> None:
             "    DEFAULT_PAGE_SIZE = 50"
         )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
 
 
 def _enrich_hardcoded_paths(finding: "RuleFinding", ctx: "HookContext") -> None:
@@ -849,18 +1021,36 @@ def _enrich_hardcoded_paths(finding: "RuleFinding", ctx: "HookContext") -> None:
 
     # Look for existing path configuration patterns
     for name in ("config.py", "settings.py", "constants.py", "paths.py"):
-        for search_dir in [root / "src", root / "src" / "utils", root / "src" / "core", root]:
+        for search_dir in [
+            root / "src",
+            root / "src" / "utils",
+            root / "src" / "core",
+            root,
+        ]:
             candidate = search_dir / name
             if candidate.exists():
                 content = _safe_read(candidate, max_bytes=10_000)
                 # Check for Path or pathlib usage
-                if "pathlib" in content or "Path(" in content or "BASE_DIR" in content or "ROOT_DIR" in content:
-                    rel = str(candidate.relative_to(root)) if _is_under(candidate, root) else str(candidate)
+                if (
+                    "pathlib" in content
+                    or "Path(" in content
+                    or "BASE_DIR" in content
+                    or "ROOT_DIR" in content
+                ):
+                    rel = (
+                        str(candidate.relative_to(root))
+                        if _is_under(candidate, root)
+                        else str(candidate)
+                    )
                     extras.append(f"\nPath configuration found in: `{rel}`")
                     # Extract path-related constants
                     for line in content.splitlines():
                         stripped = line.strip()
-                        if ("DIR" in stripped or "PATH" in stripped or "ROOT" in stripped) and "=" in stripped:
+                        if (
+                            "DIR" in stripped
+                            or "PATH" in stripped
+                            or "ROOT" in stripped
+                        ) and "=" in stripped:
                             if not stripped.startswith("#"):
                                 extras.append(f"  {stripped[:100]}")
                                 if len(extras) >= 5:
@@ -874,14 +1064,13 @@ def _enrich_hardcoded_paths(finding: "RuleFinding", ctx: "HookContext") -> None:
             "\nUse pathlib for portable path resolution:\n"
             "    from pathlib import Path\n"
             "    BASE_DIR = Path(__file__).resolve().parent.parent\n"
-            "    DATA_DIR = BASE_DIR / \"data\"\n"
+            '    DATA_DIR = BASE_DIR / "data"\n'
             "\nOr use environment variables:\n"
             "    import os\n"
-            "    DATA_DIR = Path(os.environ.get(\"DATA_DIR\", \"./data\"))"
+            '    DATA_DIR = Path(os.environ.get("DATA_DIR", "./data"))'
         )
 
-    if extras:
-        finding.message = finding.message.rstrip() + "\n" + "\n".join(extras)
+    _append_enrichment_message(finding, extras)
 
 
 # ---------------------------------------------------------------------------
@@ -914,15 +1103,25 @@ _ENRICHERS: dict[str, object] = {
 def enrich_findings(findings: list["RuleFinding"], ctx: "HookContext") -> None:
     """Enrich findings in-place with project-specific context.
 
-    Best-effort: all enrichment errors are silently swallowed so the
-    hook pipeline is never broken by enrichment failures.
+    Best-effort: enrichment failures are captured into additional context
+    while keeping the hook pipeline running.
     """
     for finding in findings:
         enricher = _ENRICHERS.get(finding.rule_id)
-        if enricher is None:
+        if not callable(enricher):
             continue
+        typed_enricher = cast(Callable[..., None], enricher)
         try:
-            enricher(finding, ctx)
-        except Exception:
-            # Never let enrichment break the hook pipeline
-            pass
+            typed_enricher(finding, ctx)
+        except (
+            AttributeError,
+            KeyError,
+            OSError,
+            SyntaxError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            # Preserve hook flow while making enrichment failures explicit.
+            existing = finding.additional_context or ""
+            detail = f"Enrichment skipped due to {type(exc).__name__}."
+            finding.additional_context = (existing + "\n" + detail).strip()

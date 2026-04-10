@@ -12,6 +12,7 @@ from vibeforcer.enrichment import enrich_findings
 from vibeforcer.models import EngineResult, RuleFinding, Severity
 from vibeforcer.rules import build_rules
 from vibeforcer.rules.base import Rule
+from vibeforcer.util import warning
 
 
 DECISION_ORDER: dict[str | None, int] = {
@@ -155,6 +156,13 @@ def _run_rule(
     except Exception as exc:
         elapsed_ms = round((monotonic() - start) * 1000.0, 3)
         acc.errors.append(f"{rule.rule_id}: {exc}")
+        warning(
+            "rule evaluation failed",
+            rule_id=rule.rule_id,
+            event_name=ctx.event_name,
+            tool_name=ctx.tool_name,
+            error=str(exc),
+        )
         ctx.trace.rule(_error_trace_payload(identity, rule.rule_id, exc, elapsed_ms))
 
 
@@ -187,6 +195,12 @@ def _safe_enrich(
     except Exception as exc:
         elapsed_ms = round((monotonic() - start) * 1000.0, 3)
         acc.errors.append(f"enrichment: {exc}")
+        warning(
+            "enrichment failed",
+            event_name=ctx.event_name,
+            tool_name=ctx.tool_name,
+            error=str(exc),
+        )
         ctx.trace.rule(_error_trace_payload(identity, "ENRICHMENT", exc, elapsed_ms))
 
 

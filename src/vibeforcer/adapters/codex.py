@@ -1,4 +1,5 @@
 """Codex CLI adapter."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -11,6 +12,19 @@ CODEX_EVENTS = {"SessionStart", "PreToolUse", "PostToolUse", "UserPromptSubmit",
 
 class CodexAdapter(PlatformAdapter):
     name = "codex"
+
+    def _apply_block_decision(
+        self,
+        payload: dict[str, object],
+        findings: list[RuleFinding],
+        decision: str | None,
+    ) -> None:
+        if decision not in {"block", "deny", "ask"}:
+            return
+        payload["decision"] = "block"
+        payload["reason"] = self.join_messages(
+            self.decision_findings(findings, decision)
+        )
 
     def normalize_payload(self, raw: dict[str, Any]) -> dict[str, Any]:
         return raw
@@ -32,10 +46,8 @@ class CodexAdapter(PlatformAdapter):
         updated_input = updated_input or {}
 
         if event_name == "PreToolUse":
-            payload: dict[str, Any] = {
-                "hookSpecificOutput": {"hookEventName": "PreToolUse"}
-            }
-            specific = payload["hookSpecificOutput"]
+            specific: dict[str, object] = {"hookEventName": "PreToolUse"}
+            payload: dict[str, object] = {"hookSpecificOutput": specific}
             if decision in {"deny", "ask", "allow"}:
                 specific["permissionDecision"] = decision
                 specific["permissionDecisionReason"] = self.join_messages(
@@ -54,7 +66,8 @@ class CodexAdapter(PlatformAdapter):
 
         if event_name == "PostToolUse":
             critical_blocks = [
-                f for f in findings
+                f
+                for f in findings
                 if f.decision == "block" and f.severity >= Severity.CRITICAL
             ]
             if critical_blocks:
@@ -69,12 +82,8 @@ class CodexAdapter(PlatformAdapter):
                     }
                 return payload
 
-            payload = {}
-            if decision in {"block", "deny", "ask"}:
-                payload["decision"] = "block"
-                payload["reason"] = self.join_messages(
-                    self.decision_findings(findings, decision)
-                )
+            payload: dict[str, object] = {}
+            self._apply_block_decision(payload, findings, decision)
             if context:
                 payload["hookSpecificOutput"] = {
                     "hookEventName": "PostToolUse",
@@ -93,12 +102,8 @@ class CodexAdapter(PlatformAdapter):
             return None
 
         if event_name == "UserPromptSubmit":
-            payload = {}
-            if decision in {"block", "deny", "ask"}:
-                payload["decision"] = "block"
-                payload["reason"] = self.join_messages(
-                    self.decision_findings(findings, decision)
-                )
+            payload: dict[str, object] = {}
+            self._apply_block_decision(payload, findings, decision)
             if context:
                 payload["hookSpecificOutput"] = {
                     "hookEventName": "UserPromptSubmit",
@@ -107,12 +112,8 @@ class CodexAdapter(PlatformAdapter):
             return payload or None
 
         if event_name == "Stop":
-            payload = {}
-            if decision in {"block", "deny", "ask"}:
-                payload["decision"] = "block"
-                payload["reason"] = self.join_messages(
-                    self.decision_findings(findings, decision)
-                )
+            payload: dict[str, object] = {}
+            self._apply_block_decision(payload, findings, decision)
             if context and not payload.get("decision"):
                 payload["systemMessage"] = context
             elif context:

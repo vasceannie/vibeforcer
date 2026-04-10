@@ -139,36 +139,7 @@ class PythonLongMethodRule(Rule):
         ]
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not is_rule_enabled(ctx, self.rule_id):
-            return []
-        if not ctx.config.python_ast_enabled:
-            return []
-        findings: list[RuleFinding] = []
-        is_pre = ctx.event_name in ("PreToolUse", "PermissionRequest")
-        if is_pre:
-            # Check the proposed edit content for long functions
-            for ct in ctx.content_targets:
-                if not ct.path.lower().endswith((".py", ".pyi")):
-                    continue
-                findings.extend(self._check_source(ct.content, ct.path, ctx))
-        else:
-            # PostToolUse: check the file on disk after the edit
-            if not (is_edit_like_tool(ctx.tool_name) or is_bash_tool(ctx.tool_name)):
-                return []
-            for path_value in ctx.candidate_paths:
-                if not path_value.lower().endswith((".py", ".pyi")):
-                    continue
-                full_path = (
-                    (ctx.config.root / path_value).resolve()
-                    if not Path(path_value).is_absolute()
-                    else Path(path_value)
-                )
-                try:
-                    source = full_path.read_text(encoding="utf-8")
-                except OSError:
-                    continue
-                findings.extend(self._check_source(source, path_value, ctx))
-        return findings
+        return _evaluate_common(self, ctx, self._check_source)
 
 
 @final
@@ -224,34 +195,7 @@ class PythonLongParameterRule(Rule):
         ]
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not is_rule_enabled(ctx, self.rule_id):
-            return []
-        if not ctx.config.python_ast_enabled:
-            return []
-        findings: list[RuleFinding] = []
-        is_pre = ctx.event_name in ("PreToolUse", "PermissionRequest")
-        if is_pre:
-            for ct in ctx.content_targets:
-                if not ct.path.lower().endswith((".py", ".pyi")):
-                    continue
-                findings.extend(self._check_source(ct.content, ct.path, ctx))
-        else:
-            if not (is_edit_like_tool(ctx.tool_name) or is_bash_tool(ctx.tool_name)):
-                return []
-            for path_value in ctx.candidate_paths:
-                if not path_value.lower().endswith((".py", ".pyi")):
-                    continue
-                full_path = (
-                    (ctx.config.root / path_value).resolve()
-                    if not Path(path_value).is_absolute()
-                    else Path(path_value)
-                )
-                try:
-                    source = full_path.read_text(encoding="utf-8")
-                except OSError:
-                    continue
-                findings.extend(self._check_source(source, path_value, ctx))
-        return findings
+        return _evaluate_common(self, ctx, self._check_source)
 
 
 # ---------------------------------------------------------------------------

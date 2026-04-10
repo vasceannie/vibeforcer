@@ -1,4 +1,5 @@
 """CLI subcommands for vibeforcer search (isx integration)."""
+
 from __future__ import annotations
 
 import argparse
@@ -9,7 +10,7 @@ import urllib.error
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-from vibeforcer.search.completions import BASH_COMPLETION, ZSH_COMPLETION
+from vibeforcer.search.completions import print_completion
 from vibeforcer.search.config import (
     APP_CONFIG,
     APP_NAME,
@@ -91,7 +92,8 @@ def _token_from_config(repo_url: str | None) -> str | None:
 
 
 def _resolve_token(
-    args: argparse.Namespace, repo_url: str | None = None,
+    args: argparse.Namespace,
+    repo_url: str | None = None,
 ) -> tuple[str | None, dict[str, str]]:
     """Resolve a git token from CLI flags, config, or env."""
     source, extra = _token_from_cli(args)
@@ -124,7 +126,8 @@ def _embed_token_in_url(url: str, token: str) -> str:
 
 
 def _build_add_args(
-    repo: str, extra: dict[str, str],
+    repo: str,
+    extra: dict[str, str],
 ) -> tuple[list[str], str]:
     """Build islands ``add`` args, optionally rewriting the URL."""
     add_args = ["add"]
@@ -148,30 +151,38 @@ def _resolve_init_provider(args: argparse.Namespace) -> tuple[str, str]:
         return provider, args.base_url
     if provider == "litellm":
         return provider, os.environ.get(
-            "LITELLM_BASE_URL", "http://llm.toy",
+            "LITELLM_BASE_URL",
+            "http://llm.toy",
         )
     return provider, "http://localhost:11434"
 
 
 def _resolve_init_model(
-    args: argparse.Namespace, provider: str, base_url: str,
+    args: argparse.Namespace,
+    provider: str,
+    base_url: str,
 ) -> dict[str, str | list[str] | None]:
     """Resolve model and API key settings for init."""
     if provider == "litellm":
         api_key_env = args.api_key_env or "LITELLM_API_KEY"
         model, discovered, warning = choose_litellm_model(
-            base_url, api_key_env, args.model,
+            base_url,
+            api_key_env,
+            args.model,
         )
         return {
-            "model": model, "api_key_env": api_key_env,
+            "model": model,
+            "api_key_env": api_key_env,
             "api_key_value": None,
-            "discovered": discovered, "warning": warning,
+            "discovered": discovered,
+            "warning": warning,
         }
     return {
         "model": args.model or "nomic-embed-text",
         "api_key_env": args.api_key_env,
         "api_key_value": args.api_key_value or "ollama",
-        "discovered": None, "warning": None,
+        "discovered": None,
+        "warning": None,
     }
 
 
@@ -179,29 +190,31 @@ def _guard_overwrite(islands_cfg: Path, force: bool) -> None:
     """Raise if config files exist and *force* is False."""
     if APP_CONFIG.exists() and not force:
         raise IsxError(
-            f"{APP_CONFIG} already exists. "
-            "Re-run with --force to overwrite it."
+            f"{APP_CONFIG} already exists. Re-run with --force to overwrite it."
         )
     if islands_cfg.exists() and not force:
         raise IsxError(
-            f"{islands_cfg} already exists. "
-            "Re-run with --force to overwrite it."
+            f"{islands_cfg} already exists. Re-run with --force to overwrite it."
         )
 
 
 def _scaffold_integration(
-    integration: str, args: argparse.Namespace,
+    integration: str,
+    args: argparse.Namespace,
 ) -> tuple[list[Path], Path | None]:
     """Run the selected integration scaffold."""
     if integration == "skill":
         paths = scaffold_skill(
-            args.skill_name, args.skill_target, force=args.force,
+            args.skill_name,
+            args.skill_target,
+            force=args.force,
         )
         return paths, None
     if integration == "opencode-tool":
         plugin = scaffold_opencode_plugin(
             expand(
-                args.opencode_plugin_path, DEFAULT_OPENCODE_PLUGIN_PATH,
+                args.opencode_plugin_path,
+                DEFAULT_OPENCODE_PLUGIN_PATH,
             ),
             expand(args.opencode_config, DEFAULT_OPENCODE_CONFIG),
             force=args.force,
@@ -211,7 +224,8 @@ def _scaffold_integration(
 
 
 def _print_init_summary(
-    cli_cfg: dict, info: dict[str, str | list[str] | None],
+    cli_cfg: dict,
+    info: dict[str, str | list[str] | None],
 ) -> None:
     """Print the post-init summary block."""
     print(f"Initialized {APP_NAME}.")
@@ -243,7 +257,8 @@ def _print_discovered(discovered: str | list[str] | None) -> None:
 
 
 def _print_scaffold_results(
-    skill_paths: list[Path], plugin_path: Path | None,
+    skill_paths: list[Path],
+    plugin_path: Path | None,
     args: argparse.Namespace,
 ) -> None:
     """Print paths written by integration scaffolding."""
@@ -273,9 +288,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     _guard_overwrite(islands_cfg, args.force)
 
     cli_cfg = {
-        "provider": provider, "binary": args.binary,
-        "base_url": base_url, "api_key_env": info["api_key_env"],
-        "api_key_value": info["api_key_value"], "model": model,
+        "provider": provider,
+        "binary": args.binary,
+        "base_url": base_url,
+        "api_key_env": info["api_key_env"],
+        "api_key_value": info["api_key_value"],
+        "model": model,
         "islands_config": str(islands_cfg),
         "integration": integration,
     }
@@ -304,14 +322,15 @@ def cmd_models(args: argparse.Namespace) -> int:
     cfg = load_config()
     models = fetch_runtime_models(cfg)
     current = cfg.get("model")
-    shown = models if args.all else [
-        m for m in models if embedding_like(m)
-    ]
+    shown = models if args.all else [m for m in models if embedding_like(m)]
 
     if args.json:
-        print(json.dumps(
-            {"current": current, "models": shown}, indent=2,
-        ))
+        print(
+            json.dumps(
+                {"current": current, "models": shown},
+                indent=2,
+            )
+        )
         return 0
 
     if not shown:
@@ -426,7 +445,9 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     """Remove and rebuild an index from its clone URL."""
     cfg = load_config()
     index_name, repo_url = resolve_reindex_target(
-        cfg, args.target, cwd=Path.cwd(),
+        cfg,
+        args.target,
+        cwd=Path.cwd(),
     )
 
     if index_name:
@@ -436,8 +457,7 @@ def cmd_reindex(args: argparse.Namespace) -> int:
             return code
     else:
         print(
-            f"No existing local index matched {args.target}, "
-            "adding fresh from URL",
+            f"No existing local index matched {args.target}, adding fresh from URL",
             flush=True,
         )
 
@@ -454,13 +474,7 @@ def cmd_reindex(args: argparse.Namespace) -> int:
 
 def cmd_completions(args: argparse.Namespace) -> int:
     """Print shell completion script."""
-    if args.shell == "bash":
-        print(BASH_COMPLETION, end="")
-        return 0
-    if args.shell == "zsh":
-        print(ZSH_COMPLETION, end="")
-        return 0
-    raise IsxError(f"unsupported shell: {args.shell}")
+    return print_completion(args.shell)
 
 
 def _prompt_integration_choice() -> str:
@@ -473,7 +487,9 @@ def _prompt_integration_choice() -> str:
     print("  3) opencode-tool (native OpenCode plugin)")
     choice = input("Select integration [1]: ").strip() or "1"
     return {
-        "1": "none", "2": "skill", "3": "opencode-tool",
+        "1": "none",
+        "2": "skill",
+        "3": "opencode-tool",
     }.get(choice, "none")
 
 
@@ -546,7 +562,9 @@ def build_search_parser(
     sub = parser.add_subparsers(dest="search_command")
     _register_all_subcommands(sub)
     parser.add_argument(
-        "query_args", nargs="*", help="Search query (default action)",
+        "query_args",
+        nargs="*",
+        help="Search query (default action)",
     )
     return parser
 
@@ -601,7 +619,8 @@ def _add_init_parser(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--skill-target",
-        choices=["claude", "opencode", "both"], default="both",
+        choices=["claude", "opencode", "both"],
+        default="both",
     )
     p.add_argument("--skill-name", default=DEFAULT_SKILL_NAME)
     p.add_argument("--opencode-plugin-path")
@@ -615,24 +634,30 @@ def _add_doctor_parser(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(func=cmd_doctor)
 
 
-def _add_models_parser(sub: argparse._SubParsersAction) -> None:
+def _add_models_parser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     p = sub.add_parser("models", help="list available embedding models")
-    p.add_argument("--all", action="store_true")
-    p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_models)
+    for option in ("--all", "--json"):
+        p.add_argument(option, action="store_true")
 
 
 def _add_use_parser(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("use", help="switch embedding model")
+    p = sub.add_parser("use", help="set default model for this repo")
     p.add_argument("model")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=cmd_use)
 
 
+def _add_list_json_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--json", action="store_true")
+
+
 def _add_list_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("list", help="list locally known indexes")
-    p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_list)
+    _add_list_json_argument(p)
 
 
 def _add_add_parser(sub: argparse._SubParsersAction) -> None:
@@ -651,24 +676,36 @@ def _add_query_parser(sub: argparse._SubParsersAction) -> None:
 
 def _add_remove_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("remove", help="remove an index")
+    p.set_defaults(func=cmd_remove)
     p.add_argument("target")
     p.add_argument("--force", action="store_true")
-    p.set_defaults(func=cmd_remove)
+
+
+def _add_sync_targets_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("targets", nargs="*")
 
 
 def _add_sync_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("sync", help="sync indexes with upstream")
-    p.add_argument("targets", nargs="*")
     p.set_defaults(func=cmd_sync)
+    _add_sync_targets_argument(p)
+
+
+def _add_reindex_target_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("target")
 
 
 def _add_reindex_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("reindex", help="remove and rebuild an index")
-    p.add_argument("target")
     p.set_defaults(func=cmd_reindex)
+    _add_reindex_target_argument(p)
+
+
+def _add_completions_shell_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("shell", choices=["bash", "zsh"])
 
 
 def _add_completions_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("completions", help="print shell completions")
-    p.add_argument("shell", choices=["bash", "zsh"])
     p.set_defaults(func=cmd_completions)
+    _add_completions_shell_argument(p)
