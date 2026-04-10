@@ -54,11 +54,11 @@ def _is_third_party_path(path: str) -> bool:
     return any(seg in normalised for seg in _THIRD_PARTY_SEGMENTS)
 
 
-def _decision(ctx: HookContext) -> str:
+def decision_for_context(ctx: HookContext) -> str:
     return "deny" if ctx.event_name in ("PreToolUse", "PermissionRequest") else "block"
 
 
-def _parse_module(source: str, max_chars: int) -> ast.Module | None:
+def parse_module(source: str, max_chars: int) -> ast.Module | None:
     """Parse source into an AST module, respecting size limit."""
     if len(source) > max_chars:
         return None
@@ -68,7 +68,7 @@ def _parse_module(source: str, max_chars: int) -> ast.Module | None:
         return None
 
 
-def _evaluate_common(
+def evaluate_common(
     rule: Rule,
     ctx: HookContext,
     check_fn: CheckFn,
@@ -110,7 +110,7 @@ def _evaluate_common(
     return findings
 
 
-def _detect_family_prefix(names: list[str]) -> str | None:
+def detect_family_prefix(names: list[str]) -> str | None:
     """Return the shared prefix if 3+ names share one, else None."""
     prefix_counts: Counter[str] = Counter()
     for name in names:

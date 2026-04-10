@@ -1,8 +1,8 @@
 """Hook-layer tests — pytest + conftest fixtures + parametrize.
 
 All shared fixtures (evaluate, load_fixture, pretool_write, pretool_bash,
-bundle_root, tmp_project) and assertion helpers (assert_denied_by,
-assert_blocked, assert_not_denied, finding_ids) live in conftest.py.
+bundle_root, tmp_project) live in conftest.py. Shared non-fixture helpers
+live in tests.support.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from vibeforcer.engine import evaluate_payload
-from tests.conftest import (
+from tests.support import (
     BUNDLE_ROOT,
     assert_blocked,
     assert_denied_by,
@@ -939,7 +939,9 @@ def test_all_outputs_json_serialisable(load_fixture):
 
 
 class TestLangGraph:
-    def _posttool_payload(self, tmp_project, rel_path: str, code: str) -> dict:
+    def _posttool_payload(
+        self, tmp_project, rel_path: str, code: str
+    ) -> dict[str, object]:
         target = tmp_project / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(code)
@@ -2298,7 +2300,7 @@ class TestSensitiveDataSafeSuffixes:
 class TestSensitiveDataRegexPatterns:
     """Test that the regex compilation in SensitiveDataRule works correctly."""
 
-    def test_pattern_auto_escaping(self, bundle_root):
+    def test_pattern_auto_escaping(self):
         """Plain substring patterns are auto-escaped (dots become literal)."""
         from vibeforcer.rules.common import _compile_sensitive_patterns
 
@@ -2306,7 +2308,7 @@ class TestSensitiveDataRegexPatterns:
         assert compiled[0].search("/project/.env"), "Should match /.env"
         assert not compiled[0].search("/xenv"), "Escaped dot should not match 'x'"
 
-    def test_regex_pattern_preserved(self, bundle_root):
+    def test_regex_pattern_preserved(self):
         """Patterns with regex metacharacters are compiled as-is."""
         from vibeforcer.rules.common import _compile_sensitive_patterns
 
@@ -2319,14 +2321,14 @@ class TestSensitiveDataRegexPatterns:
             "Should not match .env.example"
         )
 
-    def test_empty_patterns_skipped(self, bundle_root):
+    def test_empty_patterns_skipped(self):
         """Empty or whitespace-only patterns are silently skipped."""
         from vibeforcer.rules.common import _compile_sensitive_patterns
 
         compiled = _compile_sensitive_patterns(["", "  ", "/.env"])
         assert len(compiled) == 1, f"Expected 1 compiled pattern, got {len(compiled)}"
 
-    def test_safe_suffixes_constant(self, bundle_root):
+    def test_safe_suffixes_constant(self):
         """Verify the safe suffixes list includes expected entries."""
         from vibeforcer.rules.common import SensitiveDataRule
 

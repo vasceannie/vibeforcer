@@ -8,9 +8,11 @@ import os
 import sys
 import urllib.error
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
+from typing import cast
 
-SearchSubparsersAction = argparse._SubParsersAction[argparse.ArgumentParser]
+from vibeforcer._argparse_types import SubparserRegistry
+from vibeforcer._types import object_dict, string_value
+from urllib.parse import urlparse, urlunparse
 
 from vibeforcer.search.completions import print_completion
 from vibeforcer.search.config import (
@@ -21,6 +23,7 @@ from vibeforcer.search.config import (
     DEFAULT_OPENCODE_PLUGIN_PATH,
     DEFAULT_SKILL_NAME,
     IsxError,
+    SearchConfig,
     detect_provider,
     expand,
     load_config,
@@ -54,16 +57,39 @@ from vibeforcer.search.scaffolds import (
 # ---------------------------------------------------------------------------
 
 
+def _string_arg(args: argparse.Namespace, name: str, default: str = "") -> str:
+    value = getattr(args, name, default)
+    return value if isinstance(value, str) else default
+
+
+def _bool_arg(args: argparse.Namespace, name: str, default: bool = False) -> bool:
+    value = getattr(args, name, default)
+    return value if isinstance(value, bool) else default
+
+
+def _string_list_arg(args: argparse.Namespace, name: str) -> list[str]:
+    raw_value = getattr(args, name, None)
+    if not isinstance(raw_value, list):
+        return []
+    raw_items = cast(list[object], raw_value)
+    values: list[str] = []
+    for item in raw_items:
+        if isinstance(item, str):
+            values.append(item)
+    return values
+
+
 def _token_from_cli(
     args: argparse.Namespace,
 ) -> tuple[str | None, dict[str, str]]:
     """Check ``--token`` and ``--token-env`` flags."""
     extra: dict[str, str] = {}
-    if getattr(args, "token", None):
-        extra["ISLANDS_GIT_TOKEN"] = args.token
+    token = _string_arg(args, "token")
+    if token:
+        extra["ISLANDS_GIT_TOKEN"] = token
         return "--token", extra
 
-    token_env = getattr(args, "token_env", None)
+    token_env = _string_arg(args, "token_env")
     if not token_env:
         return None, extra
 
@@ -71,7 +97,7 @@ def _token_from_cli(
     if not value:
         raise IsxError(
             f"environment variable {token_env} is not set. "
-            "Set it or use --token <value> instead."
+            + "Set it or use --token <value> instead."
         )
     extra["ISLANDS_GIT_TOKEN"] = value
     return token_env, extra
@@ -130,7 +156,7 @@ def _embed_token_in_url(url: str, token: str) -> str:
 def _build_add_args(
     repo: str,
     extra: dict[str, str],
-) -> tuple[list[str], str]:
+) -> list[str]:
     """Build islands ``add`` args, optionally rewriting the URL."""
     add_args = ["add"]
     token_val = extra.get("ISLANDS_GIT_TOKEN")
@@ -138,7 +164,7 @@ def _build_add_args(
         add_args.extend(["--token", token_val])
         repo = _embed_token_in_url(repo, token_val)
     add_args.append(repo)
-    return add_args, repo
+    return add_args
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +174,10 @@ def _build_add_args(
 
 def _resolve_init_provider(args: argparse.Namespace) -> tuple[str, str]:
     """Return ``(provider, base_url)`` for init."""
-    provider = args.provider or detect_provider()
-    if args.base_url:
-        return provider, args.base_url
+    provider = _string_arg(args, "provider") or detect_provider()
+    base_url = _string_arg(args, "base_url")
+    if base_url:
+        return provider, base_url
     if provider == "litellm":
         return provider, os.environ.get(
             "LITELLM_BASE_URL",
@@ -166,11 +193,11 @@ def _resolve_init_model(
 ) -> dict[str, str | list[str] | None]:
     """Resolve model and API key settings for init."""
     if provider == "litellm":
-        api_key_env = args.api_key_env or "LITELLM_API_KEY"
+        api_key_env = _string_arg(args, "api_key_env") or "LITELLM_API_KEY"
         model, discovered, warning = choose_litellm_model(
             base_url,
             api_key_env,
-            args.model,
+            _string_arg(args, "model") or None,
         )
         return {
             "model": model,
@@ -180,9 +207,9 @@ def _resolve_init_model(
             "warning": warning,
         }
     return {
-        "model": args.model or "nomic-embed-text",
-        "api_key_env": args.api_key_env,
-        "api_key_value": args.api_key_value or "ollama",
+        "model": _string_arg(args, "model") or "nomic-embed-text",
+        "api_key_env": _string_arg(args, "api_key_env") or None,
+        "api_key_value": _string_arg(args, "api_key_value") or "ollama",
         "discovered": None,
         "warning": None,
     }
@@ -207,26 +234,26 @@ def _scaffold_integration(
     """Run the selected integration scaffold."""
     if integration == "skill":
         paths = scaffold_skill(
-            args.skill_name,
-            args.skill_target,
-            force=args.force,
+            _string_arg(args, "skill_name", DEFAULT_SKILL_NAME),
+            _string_arg(args, "skill_target", "both"),
+            force=_bool_arg(args, "force"),
         )
         return paths, None
     if integration == "opencode-tool":
         plugin = scaffold_opencode_plugin(
             expand(
-                args.opencode_plugin_path,
+                _string_arg(args, "opencode_plugin_path"),
                 DEFAULT_OPENCODE_PLUGIN_PATH,
             ),
-            expand(args.opencode_config, DEFAULT_OPENCODE_CONFIG),
-            force=args.force,
+            expand(_string_arg(args, "opencode_config"), DEFAULT_OPENCODE_CONFIG),
+            force=_bool_arg(args, "force"),
         )
         return [], plugin
     return [], None
 
 
 def _print_init_summary(
-    cli_cfg: dict,
+    cli_cfg: SearchConfig,
     info: dict[str, str | list[str] | None],
 ) -> None:
     """Print the post-init summary block."""
@@ -270,7 +297,7 @@ def _print_scaffold_results(
             print(f"    - {path}")
     if plugin_path:
         print(f"  OpenCode tool:  {plugin_path}")
-        oc = expand(args.opencode_config, DEFAULT_OPENCODE_CONFIG)
+        oc = expand(_string_arg(args, "opencode_config"), DEFAULT_OPENCODE_CONFIG)
         print(f"  OpenCode config:{oc}")
 
 
@@ -281,17 +308,17 @@ def _print_scaffold_results(
 
 def cmd_init(args: argparse.Namespace) -> int:
     """Write wrapper and islands configs."""
-    integration = args.integration or _prompt_integration_choice()
+    integration = _string_arg(args, "integration") or _prompt_integration_choice()
     provider, base_url = _resolve_init_provider(args)
     info = _resolve_init_model(args, provider, base_url)
 
     model = str(info["model"])
-    islands_cfg = expand(args.islands_config, DEFAULT_ISLANDS_CONFIG)
-    _guard_overwrite(islands_cfg, args.force)
+    islands_cfg = expand(_string_arg(args, "islands_config"), DEFAULT_ISLANDS_CONFIG)
+    _guard_overwrite(islands_cfg, _bool_arg(args, "force"))
 
-    cli_cfg = {
+    cli_cfg: SearchConfig = {
         "provider": provider,
-        "binary": args.binary,
+        "binary": _string_arg(args, "binary", "islands-ollama"),
         "base_url": base_url,
         "api_key_env": info["api_key_env"],
         "api_key_value": info["api_key_value"],
@@ -324,9 +351,11 @@ def cmd_models(args: argparse.Namespace) -> int:
     cfg = load_config()
     models = fetch_runtime_models(cfg)
     current = cfg.get("model")
-    shown = models if args.all else [m for m in models if embedding_like(m)]
+    shown = (
+        models if _bool_arg(args, "all") else [m for m in models if embedding_like(m)]
+    )
 
-    if args.json:
+    if _bool_arg(args, "json"):
         print(
             json.dumps(
                 {"current": current, "models": shown},
@@ -348,16 +377,16 @@ def cmd_models(args: argparse.Namespace) -> int:
 def cmd_use(args: argparse.Namespace) -> int:
     """Switch to a different embedding model."""
     cfg = load_config()
-    model = args.model.strip()
+    model = _string_arg(args, "model").strip()
     if not model:
         raise IsxError("model name is required")
 
-    if not args.force:
+    if not _bool_arg(args, "force"):
         models = fetch_runtime_models(cfg)
         if model not in models:
             raise IsxError(
                 f"model not found in /v1/models: {model}. "
-                "Run `isx models --all` to inspect available routes."
+                + "Run `isx models --all` to inspect available routes."
             )
 
     save_runtime_model(cfg, model)
@@ -365,7 +394,7 @@ def cmd_use(args: argparse.Namespace) -> int:
     print(f"Wrote {current_islands_config_path(cfg)}")
     print(
         "Note: if your existing indexes were built with a different "
-        "embedding dimension, re-add or rebuild them before searching.",
+        + "embedding dimension, re-add or rebuild them before searching.",
     )
     return 0
 
@@ -375,7 +404,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     cfg = load_config()
     items = local_indexes(cfg)
 
-    if args.json:
+    if _bool_arg(args, "json"):
         print(json.dumps(items, indent=2))
         return 0
 
@@ -386,7 +415,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
     print(f"Local indexes ({len(items)}):")
     for item in items:
-        repo = item.get("repository", {})
+        repo = object_dict(item.get("repository"))
         print(f"- {item.get('name')}")
         print(f"  clone:   {repo.get('clone_url', 'unknown')}")
         print(f"  files:   {item.get('file_count', 0)}")
@@ -397,21 +426,21 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_add(args: argparse.Namespace) -> int:
     """Index a repository URL."""
     cfg = load_config()
-    repo = resolve_add_repo(args.repo, cwd=Path.cwd())
+    repo = resolve_add_repo(_string_arg(args, "repo"), cwd=Path.cwd())
     token_source, extra = _resolve_token(args, repo_url=repo)
     if token_source:
         print(
             f"Using token from {token_source} for repository access",
             flush=True,
         )
-    add_args, repo = _build_add_args(repo, extra)
+    add_args = _build_add_args(repo, extra)
     return run_islands(cfg, add_args, extra_env=extra)
 
 
 def cmd_search(args: argparse.Namespace) -> int:
     """Search indexed repositories."""
     cfg = load_config()
-    query = " ".join(args.query).strip()
+    query = " ".join(_string_list_arg(args, "query")).strip()
     if not query:
         raise IsxError("search query is required")
     return run_islands(cfg, ["search", query])
@@ -420,10 +449,10 @@ def cmd_search(args: argparse.Namespace) -> int:
 def cmd_remove(args: argparse.Namespace) -> int:
     """Remove an index by name or repo identity."""
     cfg = load_config()
-    item = find_local_index(cfg, args.target)
+    item = find_local_index(cfg, _string_arg(args, "target"))
     if not item:
         raise IsxError(
-            f"could not resolve local index: {args.target}",
+            f"could not resolve local index: {_string_arg(args, 'target')}",
         )
     index_name = item.get("name")
     if not index_name:
@@ -431,7 +460,7 @@ def cmd_remove(args: argparse.Namespace) -> int:
 
     print(f"Removing index: {index_name}", flush=True)
     remove_args = ["remove"]
-    if args.force:
+    if _bool_arg(args, "force"):
         remove_args.append("--force")
     remove_args.append(str(index_name))
     return run_islands(cfg, remove_args)
@@ -440,7 +469,7 @@ def cmd_remove(args: argparse.Namespace) -> int:
 def cmd_sync(args: argparse.Namespace) -> int:
     """Sync one or more indexes with upstream."""
     cfg = load_config()
-    return run_islands(cfg, ["sync", *args.targets])
+    return run_islands(cfg, ["sync", *_string_list_arg(args, "targets")])
 
 
 def cmd_reindex(args: argparse.Namespace) -> int:
@@ -448,7 +477,7 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     cfg = load_config()
     index_name, repo_url = resolve_reindex_target(
         cfg,
-        args.target,
+        _string_arg(args, "target"),
         cwd=Path.cwd(),
     )
 
@@ -459,7 +488,7 @@ def cmd_reindex(args: argparse.Namespace) -> int:
             return code
     else:
         print(
-            f"No existing local index matched {args.target}, adding fresh from URL",
+            f"No existing local index matched {_string_arg(args, 'target')}, adding fresh from URL",
             flush=True,
         )
 
@@ -470,13 +499,13 @@ def cmd_reindex(args: argparse.Namespace) -> int:
             f"Using token from {token_source} for repository access",
             flush=True,
         )
-    add_args, repo_url = _build_add_args(repo_url, extra)
+    add_args = _build_add_args(repo_url, extra)
     return run_islands(cfg, add_args, extra_env=extra)
 
 
 def cmd_completions(args: argparse.Namespace) -> int:
     """Print shell completion script."""
-    return print_completion(args.shell)
+    return print_completion(_string_arg(args, "shell"))
 
 
 def _prompt_integration_choice() -> str:
@@ -500,7 +529,7 @@ def _prompt_integration_choice() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _print_doctor_config(cfg: dict) -> None:
+def _print_doctor_config(cfg: SearchConfig) -> None:
     """Print the static config section of ``doctor``."""
     print(f"CLI config:     {APP_CONFIG}")
     print(f"Islands config: {cfg.get('islands_config')}")
@@ -515,7 +544,7 @@ def _print_doctor_config(cfg: dict) -> None:
     except IsxError as exc:
         print(f"Binary path:    ERROR: {exc}")
 
-    api_key_env = cfg.get("api_key_env")
+    api_key_env = string_value(cfg.get("api_key_env"))
     if api_key_env:
         status = "set" if os.environ.get(api_key_env) else "missing"
         print(f"API key env:    {api_key_env}={status}")
@@ -523,7 +552,7 @@ def _print_doctor_config(cfg: dict) -> None:
         print("API key env:    n/a")
 
 
-def _probe_doctor_endpoint(cfg: dict) -> int:
+def _probe_doctor_endpoint(cfg: SearchConfig) -> int:
     """Probe the runtime endpoint and print results."""
     try:
         env = runtime_env(cfg)
@@ -553,7 +582,7 @@ def _probe_doctor_endpoint(cfg: dict) -> int:
 
 
 def build_search_parser(
-    subparsers: SearchSubparsersAction | None = None,
+    subparsers: SubparserRegistry | None = None,
 ) -> argparse.ArgumentParser:
     """Build the ``search`` subcommand parser.
 
@@ -563,7 +592,7 @@ def build_search_parser(
     parser = _create_search_root(subparsers)
     sub = parser.add_subparsers(dest="search_command")
     _register_all_subcommands(sub)
-    parser.add_argument(
+    _ = parser.add_argument(
         "query_args",
         nargs="*",
         help="Search query (default action)",
@@ -572,7 +601,7 @@ def build_search_parser(
 
 
 def _create_search_root(
-    subparsers: SearchSubparsersAction | None,
+    subparsers: SubparserRegistry | None,
 ) -> argparse.ArgumentParser:
     """Create the root parser for search commands."""
     if subparsers is not None:
@@ -590,7 +619,7 @@ def _create_search_root(
 
 
 def _register_all_subcommands(
-    sub: SearchSubparsersAction,
+    sub: SubparserRegistry,
 ) -> None:
     """Register every search subcommand on *sub*."""
     _add_init_parser(sub)
@@ -606,106 +635,106 @@ def _register_all_subcommands(
     _add_completions_parser(sub)
 
 
-def _add_init_parser(sub: SearchSubparsersAction) -> None:
+def _add_init_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("init", help="write wrapper and islands configs")
-    p.add_argument("--provider", choices=["litellm", "ollama"])
-    p.add_argument("--base-url")
-    p.add_argument("--model")
-    p.add_argument("--api-key-env")
-    p.add_argument("--api-key-value")
-    p.add_argument("--binary", default="islands-ollama")
-    p.add_argument("--islands-config")
-    p.add_argument(
+    _ = p.add_argument("--provider", choices=["litellm", "ollama"])
+    _ = p.add_argument("--base-url")
+    _ = p.add_argument("--model")
+    _ = p.add_argument("--api-key-env")
+    _ = p.add_argument("--api-key-value")
+    _ = p.add_argument("--binary", default="islands-ollama")
+    _ = p.add_argument("--islands-config")
+    _ = p.add_argument(
         "--integration",
         choices=["none", "skill", "opencode-tool"],
     )
-    p.add_argument(
+    _ = p.add_argument(
         "--skill-target",
         choices=["claude", "opencode", "both"],
         default="both",
     )
-    p.add_argument("--skill-name", default=DEFAULT_SKILL_NAME)
-    p.add_argument("--opencode-plugin-path")
-    p.add_argument("--opencode-config")
-    p.add_argument("--force", action="store_true")
+    _ = p.add_argument("--skill-name", default=DEFAULT_SKILL_NAME)
+    _ = p.add_argument("--opencode-plugin-path")
+    _ = p.add_argument("--opencode-config")
+    _ = p.add_argument("--force", action="store_true")
     p.set_defaults(func=cmd_init)
 
 
-def _add_doctor_parser(sub: SearchSubparsersAction) -> None:
+def _add_doctor_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("doctor", help="check runtime config and endpoint")
     p.set_defaults(func=cmd_doctor)
 
 
-def _add_models_parser(sub: SearchSubparsersAction) -> None:
+def _add_models_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("models", help="list available embedding models")
     p.set_defaults(func=cmd_models)
     for option in ("--all", "--json"):
-        p.add_argument(option, action="store_true")
+        _ = p.add_argument(option, action="store_true")
 
 
-def _add_use_parser(sub: SearchSubparsersAction) -> None:
+def _add_use_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("use", help="set default model for this repo")
-    p.add_argument("model")
-    p.add_argument("--force", action="store_true")
+    _ = p.add_argument("model")
+    _ = p.add_argument("--force", action="store_true")
     p.set_defaults(func=cmd_use)
 
 
 def _add_list_json_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--json", action="store_true")
+    _ = parser.add_argument("--json", action="store_true")
 
 
-def _add_list_parser(sub: SearchSubparsersAction) -> None:
+def _add_list_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("list", help="list locally known indexes")
     p.set_defaults(func=cmd_list)
     _add_list_json_argument(p)
 
 
-def _add_add_parser(sub: SearchSubparsersAction) -> None:
+def _add_add_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("add", help="index a repository URL")
-    p.add_argument("repo")
-    p.add_argument("--token")
-    p.add_argument("--token-env")
+    _ = p.add_argument("repo")
+    _ = p.add_argument("--token")
+    _ = p.add_argument("--token-env")
     p.set_defaults(func=cmd_add)
 
 
-def _add_query_parser(sub: SearchSubparsersAction) -> None:
+def _add_query_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("query", help="search indexed repositories")
-    p.add_argument("query", nargs=argparse.REMAINDER)
+    _ = p.add_argument("query", nargs=argparse.REMAINDER)
     p.set_defaults(func=cmd_search)
 
 
-def _add_remove_parser(sub: SearchSubparsersAction) -> None:
+def _add_remove_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("remove", help="remove an index")
     p.set_defaults(func=cmd_remove)
-    p.add_argument("target")
-    p.add_argument("--force", action="store_true")
+    _ = p.add_argument("target")
+    _ = p.add_argument("--force", action="store_true")
 
 
 def _add_sync_targets_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("targets", nargs="*")
+    _ = parser.add_argument("targets", nargs="*")
 
 
-def _add_sync_parser(sub: SearchSubparsersAction) -> None:
+def _add_sync_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("sync", help="sync indexes with upstream")
     p.set_defaults(func=cmd_sync)
     _add_sync_targets_argument(p)
 
 
 def _add_reindex_target_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("target")
+    _ = parser.add_argument("target")
 
 
-def _add_reindex_parser(sub: SearchSubparsersAction) -> None:
+def _add_reindex_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("reindex", help="remove and rebuild an index")
     p.set_defaults(func=cmd_reindex)
     _add_reindex_target_argument(p)
 
 
 def _add_completions_shell_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("shell", choices=["bash", "zsh"])
+    _ = parser.add_argument("shell", choices=["bash", "zsh"])
 
 
-def _add_completions_parser(sub: SearchSubparsersAction) -> None:
+def _add_completions_parser(sub: SubparserRegistry) -> None:
     p = sub.add_parser("completions", help="print shell completions")
     p.set_defaults(func=cmd_completions)
     _add_completions_shell_argument(p)

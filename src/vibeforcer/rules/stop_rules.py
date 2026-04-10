@@ -5,6 +5,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from typing_extensions import override
+
 from vibeforcer._types import bool_value, object_dict, string_value
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule, is_rule_enabled
@@ -89,18 +91,22 @@ def _last_assistant_response(transcript_path: str) -> str:
         return ""
     for line in reversed(tail.strip().splitlines()[-20:]):
         try:
-            entry = _json.loads(line)
+            raw_entry: object = _json.loads(line)
         except _json.JSONDecodeError:
             continue
-        if not isinstance(entry, dict):
+        if not isinstance(raw_entry, dict):
             continue
-        raw_role = entry.get("type") or entry.get("role")
+        entry = cast(dict[str, object], raw_entry)
+        raw_type = entry.get("type")
+        raw_role_field = entry.get("role")
+        raw_role: object = raw_type if raw_type is not None else raw_role_field
         if not isinstance(raw_role, str) or raw_role != "assistant":
             continue
-        msg_container = entry.get("message")
-        if not isinstance(msg_container, dict):
+        raw_msg_container = entry.get("message")
+        if not isinstance(raw_msg_container, dict):
             continue
-        msg = msg_container.get("content", "")
+        msg_container = cast(dict[str, object], raw_msg_container)
+        msg: object = msg_container.get("content", "")
         return _extract_content_text(msg)
     return ""
 

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 _ast_parse_count = 0
 
 
-def _append_enrichment_message(finding: "RuleFinding", lines: list[str]) -> None:
+def append_enrichment_message(finding: "RuleFinding", lines: list[str]) -> None:
     """Append enrichment lines to a finding message."""
     if not lines:
         return
@@ -28,14 +28,14 @@ def _append_enrichment_message(finding: "RuleFinding", lines: list[str]) -> None
     finding.message = base_message.rstrip() + "\n" + "\n".join(lines)
 
 
-def _first_target_content(ctx: "HookContext") -> str:
+def first_target_content(ctx: "HookContext") -> str:
     """Return the content of the first target, if available."""
     for target in ctx.content_targets:
         return target.content
     return ""
 
 
-def _safe_read(path: Path, max_bytes: int = ENRICHMENT_MAX_READ_BYTES) -> str:
+def safe_read(path: Path, max_bytes: int = ENRICHMENT_MAX_READ_BYTES) -> str:
     """Read a file, returning empty string on any error."""
     try:
         if path.stat().st_size > max_bytes:
@@ -45,7 +45,7 @@ def _safe_read(path: Path, max_bytes: int = ENRICHMENT_MAX_READ_BYTES) -> str:
         return ""
 
 
-def _safe_parse(source: str) -> ast.Module | None:
+def safe_parse(source: str) -> ast.Module | None:
     """Parse Python source, returning ``None`` on syntax errors."""
     global _ast_parse_count
     _ast_parse_count += 1
@@ -55,18 +55,18 @@ def _safe_parse(source: str) -> ast.Module | None:
         return None
 
 
-def _reset_parse_count() -> None:
+def reset_parse_count() -> None:
     """Reset the package-level AST parse counter."""
     global _ast_parse_count
     _ast_parse_count = 0
 
 
-def _get_parse_count() -> int:
+def get_parse_count() -> int:
     """Return the number of ``_safe_parse`` calls since the last reset."""
     return _ast_parse_count
 
 
-def _resolve_path(path_str: str, root: Path) -> Path:
+def resolve_path(path_str: str, root: Path) -> Path:
     """Resolve a possibly-relative path against ``root``."""
     path = Path(path_str)
     if path.is_absolute():
@@ -74,7 +74,7 @@ def _resolve_path(path_str: str, root: Path) -> Path:
     return (root / path).resolve()
 
 
-def _relative_path(path: Path, root: Path) -> str:
+def relative_path(path: Path, root: Path) -> str:
     """Return a path relative to root when possible."""
     try:
         return str(path.relative_to(root))

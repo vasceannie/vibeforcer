@@ -13,6 +13,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import is_edit_like_tool, is_bash_tool
@@ -197,10 +199,11 @@ def _find_reducer_findings(
 class LangGraphStateReducerRule(Rule):
     """Detect TypedDict state schemas with list fields missing reducers."""
 
-    rule_id = "LG-STATE-001"
-    title = "LangGraph state list field without reducer"
-    events = ("PostToolUse",)
+    rule_id: str = "LG-STATE-001"
+    title: str = "LangGraph state list field without reducer"
+    events: tuple[str, ...] = ("PostToolUse",)
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
             return []
@@ -272,10 +275,11 @@ def _mutation_finding(
 class LangGraphStateMutationRule(Rule):
     """Detect direct state mutation in LangGraph node functions."""
 
-    rule_id = "LG-NODE-001"
-    title = "Direct state mutation in LangGraph node"
-    events = ("PostToolUse",)
+    rule_id: str = "LG-NODE-001"
+    title: str = "Direct state mutation in LangGraph node"
+    events: tuple[str, ...] = ("PostToolUse",)
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
             return []
@@ -308,10 +312,11 @@ _DEPRECATED_APIS = [
 class LangGraphDeprecatedAPIRule(Rule):
     """Flag deprecated LangGraph API usage."""
 
-    rule_id = "LG-API-001"
-    title = "Deprecated LangGraph API usage"
-    events = ("PostToolUse",)
+    rule_id: str = "LG-API-001"
+    title: str = "Deprecated LangGraph API usage"
+    events: tuple[str, ...] = ("PostToolUse",)
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
             return []

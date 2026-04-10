@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing_extensions import override
 
-from vibeforcer._types import ObjectDict, ObjectMapping, object_dict, string_value
+from vibeforcer._types import (
+    ObjectDict,
+    ObjectMapping,
+    is_object_dict,
+    object_dict,
+    string_value,
+)
 from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.models import RuleFinding, Severity
 
@@ -29,6 +35,8 @@ class CodexAdapter(PlatformAdapter):
 
     @override
     def normalize_payload(self, raw: ObjectMapping) -> ObjectDict:
+        if is_object_dict(raw):
+            return raw
         return object_dict(raw)
 
     @override
@@ -50,7 +58,7 @@ class CodexAdapter(PlatformAdapter):
 
         if event_name == "PreToolUse":
             specific: dict[str, object] = {"hookEventName": "PreToolUse"}
-            payload: dict[str, object] = {"hookSpecificOutput": specific}
+            pretool_response: dict[str, object] = {"hookSpecificOutput": specific}
             if decision in {"deny", "ask", "allow"}:
                 specific["permissionDecision"] = decision
                 specific["permissionDecisionReason"] = self.join_messages(
@@ -65,7 +73,7 @@ class CodexAdapter(PlatformAdapter):
                 specific["additionalContext"] = context
             if updated_input:
                 specific["updatedInput"] = updated_input
-            return payload if len(specific) > 1 else None
+            return pretool_response if len(specific) > 1 else None
 
         if event_name == "PostToolUse":
             critical_blocks = [
@@ -74,16 +82,16 @@ class CodexAdapter(PlatformAdapter):
                 if f.decision == "block" and f.severity >= Severity.CRITICAL
             ]
             if critical_blocks:
-                payload: ObjectDict = {
+                critical_response: ObjectDict = {
                     "continue": False,
                     "stopReason": self.join_messages(critical_blocks),
                 }
                 if context:
-                    payload["hookSpecificOutput"] = {
+                    critical_response["hookSpecificOutput"] = {
                         "hookEventName": "PostToolUse",
                         "additionalContext": context,
                     }
-                return payload
+                return critical_response
 
             payload: dict[str, object] = {}
             self._apply_block_decision(payload, findings, decision)
@@ -105,25 +113,25 @@ class CodexAdapter(PlatformAdapter):
             return None
 
         if event_name == "UserPromptSubmit":
-            payload: dict[str, object] = {}
-            self._apply_block_decision(payload, findings, decision)
+            prompt_response: dict[str, object] = {}
+            self._apply_block_decision(prompt_response, findings, decision)
             if context:
-                payload["hookSpecificOutput"] = {
+                prompt_response["hookSpecificOutput"] = {
                     "hookEventName": "UserPromptSubmit",
                     "additionalContext": context,
                 }
-            return payload or None
+            return prompt_response or None
 
         if event_name == "Stop":
-            payload: dict[str, object] = {}
-            self._apply_block_decision(payload, findings, decision)
-            if context and not payload.get("decision"):
-                payload["systemMessage"] = context
+            stop_response: dict[str, object] = {}
+            self._apply_block_decision(stop_response, findings, decision)
+            if context and not stop_response.get("decision"):
+                stop_response["systemMessage"] = context
             elif context:
-                existing = string_value(payload.get("reason"))
-                payload["reason"] = (
+                existing = string_value(stop_response.get("reason"))
+                stop_response["reason"] = (
                     (existing + "\n\n" + context).strip() if existing else context
                 )
-            return payload or None
+            return stop_response or None
 
         return None

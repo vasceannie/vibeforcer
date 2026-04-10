@@ -12,7 +12,7 @@ from vibeforcer.constants import (
     ENRICHMENT_MAX_PARAMETRIZE_EXAMPLES,
     ENRICHMENT_MAX_PARAMETRIZE_SNIPPET,
 )
-from vibeforcer.enrichment._helpers import _safe_parse, _safe_read
+from vibeforcer.enrichment._helpers import safe_parse, safe_read
 from vibeforcer.enrichment._types import FixtureInfo, ParametrizeExample
 
 
@@ -60,7 +60,7 @@ def _iter_conftest_paths(start_dir: Path, root: Path) -> list[Path]:
         conftest = current / "conftest.py"
         if conftest.exists():
             try:
-                conftest.relative_to(root)
+                _ = conftest.relative_to(root)
                 paths.append(conftest)
             except ValueError:
                 pass
@@ -77,16 +77,16 @@ def _relative_name(path: Path, root: Path) -> str:
         return path.name
 
 
-def _discover_fixtures(test_path: Path, root: Path) -> list[FixtureInfo]:
+def discover_fixtures(test_path: Path, root: Path) -> list[FixtureInfo]:
     fixtures: list[FixtureInfo] = []
     seen_names: set[str] = set()
 
     for conftest in _iter_conftest_paths(test_path.parent, root):
-        content = _safe_read(conftest)
+        content = safe_read(conftest)
         if not content:
             continue
 
-        module = _safe_parse(content)
+        module = safe_parse(content)
         if module is None:
             continue
 
@@ -112,9 +112,9 @@ def _discover_fixtures(test_path: Path, root: Path) -> list[FixtureInfo]:
     return fixtures
 
 
-def _find_parametrize_examples(
+def find_parametrize_examples(
     test_path: Path,
-    root: Path,
+    _root: Path,
     max_examples: int = ENRICHMENT_MAX_PARAMETRIZE_EXAMPLES,
 ) -> list[ParametrizeExample]:
     examples: list[ParametrizeExample] = []
@@ -122,7 +122,7 @@ def _find_parametrize_examples(
         if candidate == test_path or candidate.name == "conftest.py":
             continue
 
-        content = _safe_read(candidate)
+        content = safe_read(candidate)
         if not content:
             continue
 

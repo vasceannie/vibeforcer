@@ -10,15 +10,16 @@ from __future__ import annotations
 import importlib
 import re
 from pathlib import Path
+from typing import cast
 
-_TOML_PARSER = None
+_toml_parser_module = None
 for module_name in ("tomllib", "tomli"):
     try:
         _module = importlib.import_module(module_name)
     except ModuleNotFoundError:
         continue
     if callable(getattr(_module, "loads", None)):
-        _TOML_PARSER = _module
+        _toml_parser_module = _module
         break
 
 from vibeforcer.lint import __version__
@@ -112,6 +113,39 @@ def render_quality_gate_toml(*, version: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _toml_str(v: str) -> str:
+    """Serialize a string to TOML syntax."""
+    escaped = v.encode("unicode_escape").decode("ascii").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _toml_list_of_lists(v: list[object]) -> str:
+    """Serialize a list-of-lists (e.g. deprecated_patterns) to TOML syntax."""
+    lines = ["["]
+    for item in v:
+        typed_item = cast(list[object], item)
+        inner = ", ".join(_toml_value(x) for x in typed_item)
+        lines.append(f"    [{inner}],")
+    lines.append("]")
+    return "\n".join(lines)
+
+
+def _toml_list(v: list[object]) -> str:
+    """Serialize a list to TOML syntax."""
+    if not v:
+        return "[]"
+    if all(isinstance(item, list) for item in v):
+        return _toml_list_of_lists(v)
+    if len(v) <= 6 and all(isinstance(x, (int, float)) for x in v):
+        inner = ", ".join(_toml_value(x) for x in v)
+        return f"[{inner}]"
+    lines = ["["]
+    for item in v:
+        lines.append(f"    {_toml_value(item)},")
+    lines.append("]")
+    return "\n".join(lines)
+
+
 def _toml_value(v: object) -> str:
     """Serialize a single value to TOML syntax."""
     if isinstance(v, bool):
@@ -121,29 +155,9 @@ def _toml_value(v: object) -> str:
     if isinstance(v, float):
         return str(v)
     if isinstance(v, str):
-        escaped = v.encode("unicode_escape").decode("ascii").replace('"', '\\"')
-        return f'"{escaped}"'
+        return _toml_str(v)
     if isinstance(v, list):
-        if not v:
-            return "[]"
-        # List of lists (e.g. deprecated_patterns)
-        if v and all(isinstance(item, list) for item in v):
-            lines = ["["]
-            for item in v:
-                assert isinstance(item, list)
-                inner = ", ".join(_toml_value(x) for x in item)
-                lines.append(f"    [{inner}],")
-            lines.append("]")
-            return "\n".join(lines)
-        # Short numeric lists inline
-        if len(v) <= 6 and all(isinstance(x, (int, float)) for x in v):
-            inner = ", ".join(_toml_value(x) for x in v)
-            return f"[{inner}]"
-        lines = ["["]
-        for item in v:
-            lines.append(f"    {_toml_value(item)},")
-        lines.append("]")
-        return "\n".join(lines)
+        return _toml_list(v)
     return repr(v)
 
 
@@ -214,6 +228,52 @@ def _find_section_ranges(lines: list[str]) -> dict[str, tuple[int, int]]:
 # ---------------------------------------------------------------------------
 
 
+def _parse_existing(text: str) -> dict[str, dict[str, object]] | None:
+    """Parse the TOML text and return a typed dict, or None on failure."""
+    if _toml_parser_module is None:
+        return None
+    raw = _toml_parser_module.loads(text)
+    if not isinstance(raw, dict):
+        return None
+    return cast(dict[str, dict[str, object]], raw)
+
+
+def _build_injection_plan(
+    missing: dict[str, dict[str, object]],
+    ranges: dict[str, tuple[int, int]],
+) -> tuple[list[tuple[int, list[str]]], list[str]]:
+    """Partition missing keys into in-place injections and new-section appends."""
+    inject_existing: list[tuple[int, list[str]]] = []
+    append_new: list[str] = []
+    for section, keys in missing.items():
+        if section in ranges:
+            _, end_idx = ranges[section]
+            inject_existing.append((end_idx, _render_keys(keys)))
+        else:
+            append_new.append("")
+            append_new.append(f"[{section}]")
+            append_new.extend(_render_keys(keys))
+    return inject_existing, append_new
+
+
+def _apply_injections(lines: list[str], inject_existing: list[tuple[int, list[str]]]) -> None:
+    """Insert new key lines into *lines* at the correct positions (in reverse order)."""
+    inject_existing.sort(key=lambda x: x[0], reverse=True)
+    for after_idx, new_lines in inject_existing:
+        for i, nl in enumerate(new_lines):
+            lines.insert(after_idx + 1 + i, nl)
+
+
+def _write_updated(path: Path, lines: list[str], append_new: list[str]) -> None:
+    """Extend *lines* with any new sections and write the result to *path*."""
+    if append_new:
+        lines.extend(append_new)
+    new_text = "\n".join(lines)
+    if not new_text.endswith("\n"):
+        new_text += "\n"
+    _ = path.write_text(new_text, encoding="utf-8")
+
+
 def update_toml_file(
     path: Path, *, dry_run: bool = False
 ) -> dict[str, dict[str, object]]:
@@ -226,10 +286,9 @@ def update_toml_file(
     Returns the dict of keys that were (or would be) added.
     """
     text = path.read_text(encoding="utf-8")
-    if _TOML_PARSER is None:
+    existing = _parse_existing(text)
+    if existing is None:
         return {}
-
-    existing = _TOML_PARSER.loads(text)
 
     missing = diff_config(existing)
     if not missing or dry_run:
@@ -237,36 +296,7 @@ def update_toml_file(
 
     lines = text.splitlines()
     ranges = _find_section_ranges(lines)
-
-    # Process existing sections: inject keys at the section end.
-    # Work backwards so line indices stay valid after insertions.
-    inject_existing: list[tuple[int, list[str]]] = []
-    append_new_sections: list[str] = []
-
-    for section, keys in missing.items():
-        if section in ranges:
-            _, end_idx = ranges[section]
-            inject_lines = _render_keys(keys)
-            inject_existing.append((end_idx, inject_lines))
-        else:
-            # Entirely new section
-            append_new_sections.append("")
-            append_new_sections.append(f"[{section}]")
-            append_new_sections.extend(_render_keys(keys))
-
-    # Sort injections by position descending so earlier inserts don't shift later ones
-    inject_existing.sort(key=lambda x: x[0], reverse=True)
-    for after_idx, new_lines in inject_existing:
-        for i, nl in enumerate(new_lines):
-            lines.insert(after_idx + 1 + i, nl)
-
-    # Append new sections at the end
-    if append_new_sections:
-        lines.extend(append_new_sections)
-
-    new_text = "\n".join(lines)
-    if not new_text.endswith("\n"):
-        new_text += "\n"
-    path.write_text(new_text, encoding="utf-8")
-
+    inject_existing, append_new = _build_injection_plan(missing, ranges)
+    _apply_injections(lines, inject_existing)
+    _write_updated(path, lines, append_new)
     return missing

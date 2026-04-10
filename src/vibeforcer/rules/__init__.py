@@ -12,23 +12,6 @@ from vibeforcer.rules.common import (
     SensitiveDataRule,
     SystemProtectionRule,
 )
-try:
-    from vibeforcer.rules.python_ast import (
-        PythonCyclomaticComplexityRule,
-        PythonDeadCodeRule,
-        PythonDeepNestingRule,
-        PythonFeatureEnvyRule,
-        PythonGodClassRule,
-        PythonLongLineRule,
-        PythonLongMethodRule,
-        PythonLongParameterRule,
-        PythonThinWrapperRule,
-        PythonFlatFileSiblingsRule,
-        PythonImportFanoutRule,
-    )
-    _PYTHON_AST_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - exercised in import-failure test
-    _PYTHON_AST_IMPORT_ERROR = exc
 from vibeforcer.rules.regex_rule import RegexRule
 from vibeforcer.rules.langgraph import (
     LangGraphDeprecatedAPIRule,
@@ -51,15 +34,23 @@ from vibeforcer.rules.stop_rules import (
 )
 
 
+_PYTHON_AST_IMPORT_ERROR: Exception | None = None
 _PYTHON_AST_IMPORT_REPORTED = False
+
+# Backward-compatible aliases for older internal references.
+_python_ast_import_error: Exception | None = None
+_python_ast_import_reported = False
 
 
 def _build_python_ast_rules(ctx: HookContext) -> list[Rule]:
-    global _PYTHON_AST_IMPORT_REPORTED
+    global _python_ast_import_error, _python_ast_import_reported
 
-    if _PYTHON_AST_IMPORT_ERROR is not None:
-        if not _PYTHON_AST_IMPORT_REPORTED:
-            _PYTHON_AST_IMPORT_REPORTED = True
+    current_error = _PYTHON_AST_IMPORT_ERROR or _python_ast_import_error
+    already_reported = _PYTHON_AST_IMPORT_REPORTED or _python_ast_import_reported
+
+    if current_error is not None:
+        if not already_reported:
+            _python_ast_import_reported = True
             ctx.trace.rule(
                 {
                     "platform": "any",
@@ -70,13 +61,31 @@ def _build_python_ast_rules(ctx: HookContext) -> list[Rule]:
                     "severity": "high",
                     "decision": None,
                     "message": "Python AST rules disabled due to import error",
-                    "additional_context": repr(_PYTHON_AST_IMPORT_ERROR),
+                    "additional_context": repr(current_error),
                     "metadata": {"kind": "import_error"},
                 }
             )
         return []
 
-    return [
+    try:
+        from vibeforcer.rules.python_ast import (
+            PythonCyclomaticComplexityRule,
+            PythonDeadCodeRule,
+            PythonDeepNestingRule,
+            PythonFeatureEnvyRule,
+            PythonFlatFileSiblingsRule,
+            PythonGodClassRule,
+            PythonImportFanoutRule,
+            PythonLongLineRule,
+            PythonLongMethodRule,
+            PythonLongParameterRule,
+            PythonThinWrapperRule,
+        )
+    except Exception as exc:  # pragma: no cover - exercised in import-failure test
+        _python_ast_import_error = exc
+        return _build_python_ast_rules(ctx)
+
+    python_ast_rules: list[Rule] = [
         PythonLongMethodRule(),
         PythonLongParameterRule(),
         PythonLongLineRule(),
@@ -89,6 +98,7 @@ def _build_python_ast_rules(ctx: HookContext) -> list[Rule]:
         PythonFlatFileSiblingsRule(),
         PythonImportFanoutRule(),
     ]
+    return python_ast_rules
 
 
 def build_rules(ctx: HookContext) -> list[Rule]:

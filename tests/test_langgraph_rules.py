@@ -3,12 +3,13 @@
 These rules are PostToolUse-only and advisory (context, not deny/block).
 Test payloads simulate Write events with LangGraph-flavored Python files.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 from vibeforcer.engine import evaluate_payload
-from conftest import finding_ids
+from tests.support import finding_ids
 
 
 def _post_write(
@@ -43,7 +44,9 @@ class TestStateReducerRule:
         )
         payload = _post_write(langgraph_project, "src/state.py", code)
         result = evaluate_payload(payload)
-        assert "LG-STATE-001" in finding_ids(result), "bare list fields must trigger reducer warning"
+        assert "LG-STATE-001" in finding_ids(result), (
+            "bare list fields must trigger reducer warning"
+        )
 
     def test_annotated_list_ok(self, langgraph_project: Path) -> None:
         code = (
@@ -55,7 +58,9 @@ class TestStateReducerRule:
         )
         payload = _post_write(langgraph_project, "src/state.py", code)
         result = evaluate_payload(payload)
-        assert "LG-STATE-001" not in finding_ids(result), "annotated list must not trigger"
+        assert "LG-STATE-001" not in finding_ids(result), (
+            "annotated list must not trigger"
+        )
 
     def test_non_langgraph_project_skipped(self, tmp_path: Path) -> None:
         (tmp_path / "src").mkdir()
@@ -68,7 +73,9 @@ class TestStateReducerRule:
         )
         payload = _post_write(tmp_path, "src/state.py", code)
         result = evaluate_payload(payload)
-        assert "LG-STATE-001" not in finding_ids(result), "non-langgraph projects must not trigger"
+        assert "LG-STATE-001" not in finding_ids(result), (
+            "non-langgraph projects must not trigger"
+        )
 
 
 class TestStateMutationRule:
@@ -77,34 +84,40 @@ class TestStateMutationRule:
     def test_direct_assignment_flagged(self, langgraph_project: Path) -> None:
         code = (
             "from langgraph.graph import StateGraph\n\n"
-            'def my_node(state):\n'
+            "def my_node(state):\n"
             '    state["counter"] = 1\n'
-            '    return state\n'
+            "    return state\n"
         )
         payload = _post_write(langgraph_project, "src/nodes.py", code)
         result = evaluate_payload(payload)
-        assert "LG-NODE-001" in finding_ids(result), "state assignment must trigger mutation warning"
+        assert "LG-NODE-001" in finding_ids(result), (
+            "state assignment must trigger mutation warning"
+        )
 
     def test_append_flagged(self, langgraph_project: Path) -> None:
         code = (
             "from langgraph.graph import StateGraph\n\n"
-            'def my_node(state):\n'
+            "def my_node(state):\n"
             '    state["items"].append("x")\n'
-            '    return state\n'
+            "    return state\n"
         )
         payload = _post_write(langgraph_project, "src/nodes.py", code)
         result = evaluate_payload(payload)
-        assert "LG-NODE-001" in finding_ids(result), "state append must trigger mutation warning"
+        assert "LG-NODE-001" in finding_ids(result), (
+            "state append must trigger mutation warning"
+        )
 
     def test_return_dict_ok(self, langgraph_project: Path) -> None:
         code = (
             "from langgraph.graph import StateGraph\n\n"
-            'def my_node(state):\n'
+            "def my_node(state):\n"
             '    return {"counter": state["counter"] + 1}\n'
         )
         payload = _post_write(langgraph_project, "src/nodes.py", code)
         result = evaluate_payload(payload)
-        assert "LG-NODE-001" not in finding_ids(result), "returning dict must not trigger"
+        assert "LG-NODE-001" not in finding_ids(result), (
+            "returning dict must not trigger"
+        )
 
 
 class TestDeprecatedAPIRule:
@@ -118,7 +131,9 @@ class TestDeprecatedAPIRule:
         )
         payload = _post_write(langgraph_project, "src/graph.py", code)
         result = evaluate_payload(payload)
-        assert "LG-API-001" in finding_ids(result), "set_entry_point must trigger deprecated warning"
+        assert "LG-API-001" in finding_ids(result), (
+            "set_entry_point must trigger deprecated warning"
+        )
 
     def test_add_edge_ok(self, langgraph_project: Path) -> None:
         code = (
@@ -128,4 +143,6 @@ class TestDeprecatedAPIRule:
         )
         payload = _post_write(langgraph_project, "src/graph.py", code)
         result = evaluate_payload(payload)
-        assert "LG-API-001" not in finding_ids(result), "add_edge(START, ..) must not trigger"
+        assert "LG-API-001" not in finding_ids(result), (
+            "add_edge(START, ..) must not trigger"
+        )

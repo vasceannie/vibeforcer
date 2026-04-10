@@ -4,16 +4,17 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, final
+from typing_extensions import override
 
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import is_bash_tool, is_edit_like_tool
 
 from ._helpers import (
-    _decision,
-    _detect_family_prefix,
-    _evaluate_common,
-    _parse_module,
+    decision_for_context,
+    detect_family_prefix,
+    evaluate_common,
+    parse_module,
 )
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ class PythonLongMethodRule(Rule):
         ]
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)
 
 
 @final
@@ -119,7 +120,7 @@ class PythonLongParameterRule(Rule):
         ]
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +172,7 @@ class PythonLongLineRule(Rule):
                 rule_id=self.rule_id,
                 title=self.title,
                 severity=Severity.MEDIUM,
-                decision=_decision(ctx),
+                decision=decision_for_context(ctx),
                 message=(
                     f"Line {worst_lineno} in `{path_value}` is {worst_length} characters long. "
                     f"Keep lines at or below {max_length} characters."
@@ -185,7 +186,7 @@ class PythonLongLineRule(Rule):
         ]
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)
 
 
 @final
@@ -221,7 +222,7 @@ class PythonDeepNestingRule(Rule):
     def _check_source(
         self, source: str, path_value: str, ctx: HookContext
     ) -> list[RuleFinding]:
-        module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
+        module = parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
         worst_name = ""
@@ -239,7 +240,7 @@ class PythonDeepNestingRule(Rule):
                 rule_id=self.rule_id,
                 title=self.title,
                 severity=Severity.HIGH,
-                decision=_decision(ctx),
+                decision=decision_for_context(ctx),
                 message=(
                     f"Function `{worst_name}` in `{path_value}` has nesting depth {worst_depth}. "
                     f"Keep nesting at or below {ctx.config.python_max_nesting_depth} levels."
@@ -253,7 +254,7 @@ class PythonDeepNestingRule(Rule):
         ]
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)
 
 
 @final
@@ -365,7 +366,7 @@ class PythonFeatureEnvyRule(Rule):
     def _check_source(
         self, source: str, path_value: str, ctx: HookContext
     ) -> list[RuleFinding]:
-        module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
+        module = parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
         findings: list[RuleFinding] = []
@@ -416,7 +417,7 @@ class PythonFeatureEnvyRule(Rule):
         return findings
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)
 
 
 @final
@@ -430,7 +431,7 @@ class PythonThinWrapperRule(Rule):
     def _check_source(
         self, source: str, path_value: str, ctx: HookContext
     ) -> list[RuleFinding]:
-        module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
+        module = parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
         findings: list[RuleFinding] = []
@@ -468,7 +469,7 @@ class PythonThinWrapperRule(Rule):
                     rule_id=self.rule_id,
                     title=self.title,
                     severity=Severity.MEDIUM,
-                    decision=_decision(ctx),
+                    decision=decision_for_context(ctx),
                     message=(
                         f"Function `{node.name}` in `{path_value}` is a thin wrapper "
                         f"around `{wrapped}`. Consider calling the wrapped function directly."
@@ -483,7 +484,7 @@ class PythonThinWrapperRule(Rule):
         return findings
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)
 
 
 @final
@@ -499,7 +500,7 @@ class PythonGodClassRule(Rule):
     def _check_source(
         self, source: str, path_value: str, ctx: HookContext
     ) -> list[RuleFinding]:
-        module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
+        module = parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
         findings: list[RuleFinding] = []
@@ -517,7 +518,7 @@ class PythonGodClassRule(Rule):
                         rule_id=self.rule_id,
                         title=self.title,
                         severity=Severity.HIGH,
-                        decision=_decision(ctx),
+                        decision=decision_for_context(ctx),
                         message=(
                             f"Class `{node.name}` in `{path_value}` has {method_count} non-dunder methods. "
                             f"Keep classes at or below {ctx.config.python_max_god_class_methods} methods or split responsibilities."
@@ -532,7 +533,7 @@ class PythonGodClassRule(Rule):
         return findings
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)
 
 
 @final
@@ -567,7 +568,7 @@ class PythonCyclomaticComplexityRule(Rule):
     def _check_source(
         self, source: str, path_value: str, ctx: HookContext
     ) -> list[RuleFinding]:
-        module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
+        module = parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
         worst_name = ""
@@ -585,7 +586,7 @@ class PythonCyclomaticComplexityRule(Rule):
                 rule_id=self.rule_id,
                 title=self.title,
                 severity=Severity.HIGH,
-                decision=_decision(ctx),
+                decision=decision_for_context(ctx),
                 message=(
                     f"Function `{worst_name}` in `{path_value}` has cyclomatic complexity {worst_cc}. "
                     f"Keep complexity at or below {ctx.config.python_max_complexity}."
@@ -599,7 +600,7 @@ class PythonCyclomaticComplexityRule(Rule):
         ]
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)
 
 
 @final
@@ -654,7 +655,7 @@ class PythonDeadCodeRule(Rule):
     def _check_source(
         self, source: str, path_value: str, ctx: HookContext
     ) -> list[RuleFinding]:
-        module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
+        module = parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
         findings: list[RuleFinding] = []
@@ -669,7 +670,7 @@ class PythonDeadCodeRule(Rule):
                         rule_id=self.rule_id,
                         title=self.title,
                         severity=Severity.HIGH,
-                        decision=_decision(ctx),
+                        decision=decision_for_context(ctx),
                         message=(
                             f"Function `{node.name}` in `{path_value}` has unreachable code "
                             f"after `{cause}` at line {lineno}."
@@ -685,7 +686,7 @@ class PythonDeadCodeRule(Rule):
         return findings
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)
 
 
 # ---------------------------------------------------------------------------
@@ -807,7 +808,7 @@ class PythonImportFanoutRule(Rule):
         path_value: str,
         ctx: HookContext,
     ) -> list[RuleFinding]:
-        module = _parse_module(source, ctx.config.python_ast_max_parse_chars)
+        module = parse_module(source, ctx.config.python_ast_max_parse_chars)
         if module is None:
             return []
 
@@ -829,7 +830,7 @@ class PythonImportFanoutRule(Rule):
             if len(names) <= limit:
                 continue
 
-            family_prefix = _detect_family_prefix(names)
+            family_prefix = detect_family_prefix(names)
             names_preview = ", ".join(names[:6])
             if len(names) > 6:
                 names_preview += ", ..."
@@ -870,4 +871,4 @@ class PythonImportFanoutRule(Rule):
         return findings
 
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        return _evaluate_common(self, ctx, self._check_source)
+        return evaluate_common(self, ctx, self._check_source)

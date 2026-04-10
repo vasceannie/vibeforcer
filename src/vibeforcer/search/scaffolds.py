@@ -7,7 +7,7 @@ import textwrap
 from collections.abc import MutableMapping
 from pathlib import Path
 
-from vibeforcer._types import object_dict, object_list
+from vibeforcer._types import ObjectDict, object_dict, object_list
 from vibeforcer.search.config import (
     DEFAULT_CLAUDE_SKILLS_DIR,
     DEFAULT_OPENCODE_CONFIG,
@@ -28,7 +28,7 @@ def write_text_file(path: Path, content: str, force: bool) -> None:
 
 def append_unique_json_list(path: Path, key: str, value: str) -> None:
     """Append *value* to a JSON array at *key* in *path*."""
-    data: dict[str, object]
+    data: ObjectDict
     if path.exists():
         try:
             data = object_dict(json.loads(path.read_text()))

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing_extensions import override
 
-from vibeforcer._types import ObjectDict, ObjectMapping, object_dict, string_value
+from vibeforcer._types import (
+    ObjectDict,
+    ObjectMapping,
+    is_object_dict,
+    object_dict,
+    string_value,
+)
 from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.models import RuleFinding
 
@@ -14,6 +20,8 @@ class ClaudeAdapter(PlatformAdapter):
 
     @override
     def normalize_payload(self, raw: ObjectMapping) -> ObjectDict:
+        if is_object_dict(raw):
+            return raw
         return object_dict(raw)
 
     @override
@@ -32,10 +40,8 @@ class ClaudeAdapter(PlatformAdapter):
         updated_input = updated_input or {}
 
         if event_name == "PreToolUse":
-            payload: ObjectDict = {
-                "hookSpecificOutput": {"hookEventName": "PreToolUse"}
-            }
-            specific = object_dict(payload["hookSpecificOutput"])
+            specific: ObjectDict = {"hookEventName": "PreToolUse"}
+            response: ObjectDict = {"hookSpecificOutput": specific}
             if decision in {"deny", "ask", "allow"}:
                 specific["permissionDecision"] = decision
                 specific["permissionDecisionReason"] = self.join_messages(
@@ -50,7 +56,7 @@ class ClaudeAdapter(PlatformAdapter):
                 specific["updatedInput"] = updated_input
             if context:
                 specific["additionalContext"] = context
-            return payload if len(specific) > 1 else None
+            return response if len(specific) > 1 else None
 
         if event_name == "PermissionRequest":
             if decision not in {"deny", "allow"}:

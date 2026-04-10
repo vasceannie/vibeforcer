@@ -156,7 +156,7 @@ def _lint_init(root: Path) -> int:
         print("  To add missing keys, run: vibeforcer lint update")
         return 1
 
-    destination.write_text(
+    _ = destination.write_text(
         render_quality_gate_toml(version=lint_version), encoding="utf-8"
     )
     print(f"✓ Created {destination}")
@@ -193,9 +193,12 @@ def _lint_update(root: Path, *, dry_run: bool = False) -> int:
 
 
 def cmd_lint(args: argparse.Namespace) -> int:
-    lint_command = getattr(args, "lint_command", None) or "check"
-    args.path = args.path if hasattr(args, "path") else "."
-    root = Path(getattr(args, "path", ".") or ".").resolve()
+    raw_lint_command = getattr(args, "lint_command", None)
+    lint_command = raw_lint_command if isinstance(raw_lint_command, str) else "check"
+    raw_path = getattr(args, "path", ".")
+    path_value = raw_path if isinstance(raw_path, str) and raw_path else "."
+    args.path = path_value
+    root = Path(path_value).resolve()
     dispatch = {
         "check": _lint_check,
         "baseline": _lint_baseline,
@@ -205,5 +208,9 @@ def cmd_lint(args: argparse.Namespace) -> int:
     if handler is not None:
         return handler(root)
     if lint_command == "update":
-        return _lint_update(root, dry_run=getattr(args, "dry_run", False))
+        raw_dry_run = getattr(args, "dry_run", False)
+        return _lint_update(
+            root,
+            dry_run=raw_dry_run if isinstance(raw_dry_run, bool) else False,
+        )
     return 1

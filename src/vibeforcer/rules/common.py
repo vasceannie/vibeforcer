@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
-from typing import Any
+from typing_extensions import override
 
 from vibeforcer.constants import SAFE_READ_SHELL_VERBS
 from vibeforcer.models import RuleFinding, Severity
@@ -36,26 +36,32 @@ def _path_matches_any(path_value: str, patterns: list[str]) -> str | None:
     return None
 
 
-class PromptContextRule(Rule):
-    rule_id = "BUILTIN-INJECT-PROMPT"
-    title = "Inject prompt context"
-    events = ("UserPromptSubmit",)
+def _read_context_fragment(root: Path, relative: str) -> str | None:
+    """Read a prompt context file and return its fragment, or None to skip."""
+    path = root / relative
+    if not path.exists():
+        return None
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return f"## {relative}\n{content}" if content else None
 
+
+class PromptContextRule(Rule):
+    rule_id: str = "BUILTIN-INJECT-PROMPT"
+    title: str = "Inject prompt context"
+    events: tuple[str, ...] = ("UserPromptSubmit",)
+
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id):
             return []
-        fragments: list[str] = []
-        for relative in ctx.config.prompt_context_files:
-            path = ctx.config.root / relative
-            if not path.exists():
-                continue
-            try:
-                content = path.read_text(encoding="utf-8").strip()
-            except OSError:
-                continue
-            if not content:
-                continue
-            fragments.append(f"## {relative}\n{content}")
+        fragments = [
+            frag
+            for relative in ctx.config.prompt_context_files
+            if (frag := _read_context_fragment(ctx.config.root, relative)) is not None
+        ]
         if not fragments:
             return []
         return [
@@ -127,50 +133,64 @@ class FullFileReadRule(Rule):
         ]
 
 
-class ProtectedPathsRule(Rule):
-    rule_id = "BUILTIN-PROTECTED-PATHS"
-    title = "Protected paths"
-    events = ("PreToolUse", "PermissionRequest")
+def _is_readonly_tool(tool_name: str | None) -> bool:
+    from vibeforcer.constants import READ_TOOL_NAMES
 
+    return bool(tool_name and tool_name.lower() in READ_TOOL_NAMES)
+
+
+def _is_safe_bash_read(tool_name: str | None, bash_command: str | None) -> bool:
+    return (
+        tool_name is not None
+        and tool_name.lower() == "bash"
+        and bash_command is not None
+        and _is_safe_read_shell(bash_command)
+    )
+
+
+def _find_matched_protected_path(
+    candidate_paths: list[str],
+    patterns: list[str],
+) -> str | None:
+    for path_value in candidate_paths:
+        if _path_matches_any(path_value, patterns):
+            return path_value
+    return None
+
+
+class ProtectedPathsRule(Rule):
+    rule_id: str = "BUILTIN-PROTECTED-PATHS"
+    title: str = "Protected paths"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
+
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id):
             return []
         patterns = ctx.config.protected_paths
         if not patterns:
             return []
-        # Read-only tools should never be blocked by protected paths
-        from vibeforcer.constants import READ_TOOL_NAMES
-
-        if ctx.tool_name and ctx.tool_name.lower() in READ_TOOL_NAMES:
+        if _is_readonly_tool(ctx.tool_name):
             return []
-
-        matched_path = None
-        for path_value in ctx.candidate_paths:
-            pattern = _path_matches_any(path_value, patterns)
-            if pattern:
-                matched_path = path_value
-                break
-
-        if matched_path:
-            if ctx.tool_name and ctx.tool_name.lower() == "bash":
-                command = ctx.bash_command
-                if command and _is_safe_read_shell(command):
-                    return []
-            return [
-                RuleFinding(
-                    rule_id=self.rule_id,
-                    title=self.title,
-                    severity=Severity.HIGH,
-                    decision="deny",
-                    message=(
-                        f"Protected path matched: {matched_path}. "
-                        f"Modify configuration only with explicit "
-                        f"approval or move the check into config.json."
-                    ),
-                    metadata={"path": matched_path},
-                )
-            ]
-        return []
+        matched_path = _find_matched_protected_path(ctx.candidate_paths, patterns)
+        if matched_path is None:
+            return []
+        if _is_safe_bash_read(ctx.tool_name, ctx.bash_command):
+            return []
+        return [
+            RuleFinding(
+                rule_id=self.rule_id,
+                title=self.title,
+                severity=Severity.HIGH,
+                decision="deny",
+                message=(
+                    f"Protected path matched: {matched_path}. "
+                    f"Modify configuration only with explicit "
+                    f"approval or move the check into config.json."
+                ),
+                metadata={"path": matched_path},
+            )
+        ]
 
 
 _META_CHARS = frozenset("[](){}*+?|^$\\")

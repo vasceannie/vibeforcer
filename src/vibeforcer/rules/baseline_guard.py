@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import path_matches_glob
@@ -20,12 +22,13 @@ class BaselineGuardRule(Rule):
     (inflating the baseline to hide new debt).
     """
 
-    rule_id = "BASELINE-001"
-    title = "Baseline inflation guard"
-    events = ("PreToolUse",)
+    rule_id: str = "BASELINE-001"
+    title: str = "Baseline inflation guard"
+    events: tuple[str, ...] = ("PreToolUse",)
 
-    _BASELINE_GLOBS = ("baselines.json", "**/baselines.json")
+    _BASELINE_GLOBS: tuple[str, ...] = ("baselines.json", "**/baselines.json")
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id):
             return []
@@ -95,7 +98,14 @@ class BaselineGuardRule(Rule):
         if not isinstance(new_data, dict):
             return []
 
-        new_rules: dict[str, list] = new_data.get("rules", {})
+        raw_new_rules = new_data.get("rules", {})
+        if not isinstance(raw_new_rules, dict):
+            return []
+        new_rules = {
+            str(rule_name): list(ids)
+            for rule_name, ids in raw_new_rules.items()
+            if isinstance(ids, list)
+        }
 
         existing = self._resolve_existing_path(path_str, ctx)
         if existing is None:
@@ -110,7 +120,14 @@ class BaselineGuardRule(Rule):
         if not isinstance(old_data, dict):
             return []
 
-        old_rules: dict[str, list] = old_data.get("rules", {})
+        raw_old_rules = old_data.get("rules", {})
+        if not isinstance(raw_old_rules, dict):
+            return []
+        old_rules = {
+            str(rule_name): list(ids)
+            for rule_name, ids in raw_old_rules.items()
+            if isinstance(ids, list)
+        }
 
         # Compare counts per rule
         increases: list[str] = []
@@ -134,10 +151,10 @@ class BaselineGuardRule(Rule):
                 decision="deny",
                 message=(
                     "Baseline inflation blocked. The following rules have MORE "
-                    "violations than before:\n"
+                    + "violations than before:\n"
                     + "\n".join(increases)
                     + "\n\nFix the violations instead of increasing the baseline. "
-                    "Only decreases (fixing debt) are allowed."
+                    + "Only decreases (fixing debt) are allowed."
                 ),
             )
         ]

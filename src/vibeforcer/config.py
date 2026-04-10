@@ -4,15 +4,17 @@ import json
 import importlib
 import os
 from pathlib import Path
+from collections.abc import Callable
+from typing import cast
 
-_toml_parser = None
+_toml_loads: Callable[[str], object] | None = None
 for module_name in ("tomllib", "tomli"):
     try:
         _module = importlib.import_module(module_name)
     except ModuleNotFoundError:
         continue
     if callable(getattr(_module, "loads", None)):
-        _toml_parser = _module
+        _toml_loads = cast(Callable[[str], object], getattr(_module, "loads"))
         break
 
 from vibeforcer.models import RegexRuleConfig, RuntimeConfig
@@ -117,13 +119,14 @@ def detect_root() -> Path:
 
 def _load_toml(root: Path) -> dict[str, object]:
     """Load quality_gate.toml from project root if available."""
-    if _toml_parser is None:
+    if _toml_loads is None:
         return {}
     for name in ("quality_gate.toml",):
         toml_path = root / name
         if toml_path.exists():
             try:
-                return _toml_parser.loads(toml_path.read_text(encoding="utf-8"))
+                parsed = _toml_loads(toml_path.read_text(encoding="utf-8"))
+                return _object_dict(parsed)
             except (OSError, ValueError) as exc:
                 warning(
                     "quality gate TOML load failed",
@@ -136,7 +139,8 @@ def _load_toml(root: Path) -> dict[str, object]:
 
 def _load_json(path: Path) -> dict[str, object]:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        parsed = cast(object, json.loads(path.read_text(encoding="utf-8")))
+        return _object_dict(parsed)
     except FileNotFoundError:
         return {}
     except json.JSONDecodeError as exc:
@@ -181,7 +185,8 @@ def is_path_skipped(repo_path: Path, skip_paths: list[str]) -> bool:
 def _object_dict(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}
-    return {str(key): item for key, item in value.items()}
+    raw_dict = cast(dict[object, object], value)
+    return {str(key): item for key, item in raw_dict.items()}
 
 
 def _string_value(value: object, default: str = "") -> str:
@@ -211,17 +216,20 @@ def _float_value(value: object, default: float) -> float:
 def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [str(item) for item in value]
+    raw_list = cast(list[object], value)
+    return [str(item) for item in raw_list]
 
 
 def _command_map(value: object) -> dict[str, list[str]]:
     if not isinstance(value, dict):
         return {}
 
+    raw_dict = cast(dict[object, object], value)
     commands: dict[str, list[str]] = {}
-    for key, item in value.items():
+    for key, item in raw_dict.items():
         if isinstance(item, list):
-            commands[str(key)] = [str(entry) for entry in item]
+            raw_list = cast(list[object], item)
+            commands[str(key)] = [str(entry) for entry in raw_list]
     return commands
 
 
@@ -242,10 +250,11 @@ def _regex_rule_configs(value: object) -> list[RegexRuleConfig]:
     if not isinstance(value, list):
         return []
 
+    raw_items = cast(list[object], value)
     regex_rules: list[RegexRuleConfig] = []
-    for item in value:
+    for item in raw_items:
         if isinstance(item, dict):
-            data = _object_dict(item)
+            data = _object_dict(cast(dict[object, object], item))
             regex_rules.append(
                 RegexRuleConfig(
                     rule_id=_string_value(data.get("rule_id")),

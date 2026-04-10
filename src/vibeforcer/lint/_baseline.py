@@ -12,6 +12,9 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
+
+from typing_extensions import override
 
 from vibeforcer.lint._config import get_config
 
@@ -42,6 +45,7 @@ class Violation:
             parts.append(self.detail)
         return "|".join(parts)
 
+    @override
     def __str__(self) -> str:
         base = f"{self.relative_path}:{self.identifier}"
         return f"{base} ({self.detail})" if self.detail else base
@@ -66,10 +70,23 @@ def load_baseline() -> dict[str, set[str]]:
     bp = _baseline_path()
     if not bp.exists():
         return {}
-    data = json.loads(bp.read_text(encoding="utf-8"))
-    if data.get("schema_version", 0) != SCHEMA_VERSION:
+    data = cast(object, json.loads(bp.read_text(encoding="utf-8")))
+    if not isinstance(data, dict):
+        raise ValueError("Baseline data must be a JSON object")
+    raw_data = cast(dict[object, object], data)
+    if raw_data.get("schema_version", 0) != SCHEMA_VERSION:
         raise ValueError("Baseline schema version mismatch")
-    return {rule: set(ids) for rule, ids in data.get("rules", {}).items()}
+    rules = raw_data.get("rules", {})
+    if not isinstance(rules, dict):
+        raise ValueError("Baseline rules must be a JSON object")
+    typed_rules = cast(dict[str, object], rules)
+    result: dict[str, set[str]] = {}
+    for rule, ids in typed_rules.items():
+        if not isinstance(ids, list):
+            continue
+        typed_ids = cast(list[object], ids)
+        result[str(rule)] = {str(item) for item in typed_ids}
+    return result
 
 
 def save_baseline(violations_by_rule: dict[str, list[Violation]]) -> None:
@@ -83,7 +100,7 @@ def save_baseline(violations_by_rule: dict[str, list[Violation]]) -> None:
             for rule, violations in violations_by_rule.items()
         },
     }
-    bp.write_text(
+    _ = bp.write_text(
         json.dumps(data, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
@@ -125,7 +142,7 @@ def assert_no_new_violations(
     if len(new_violations) > max_new_allowed:
         parts = [
             f"[{rule}] {len(new_violations)} NEW violation(s) "
-            f"(baseline: {len(allowed_ids)}, current: {len(current_violations)}):",
+            + f"(baseline: {len(allowed_ids)}, current: {len(current_violations)}):",
         ]
         parts.extend(f"  + {v}" for v in new_violations[:20])
         if len(new_violations) > 20:

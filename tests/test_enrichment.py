@@ -12,13 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from tests import conftest as test_support
+from tests import support as test_support
 
 from vibeforcer._types import ObjectDict
 from vibeforcer.engine import evaluate_payload
 from vibeforcer.enrichment import (
-    _discover_fixtures,
-    _find_parametrize_examples,
+    discover_fixtures,
+    find_parametrize_examples,
     enrich_findings,
 )
 from vibeforcer.context import build_context
@@ -89,7 +89,7 @@ class TestDiscoverFixtures:
         test_file = tests_dir / "test_api.py"
         test_file.write_text("# test file", encoding="utf-8")
 
-        fixtures = _discover_fixtures(test_file, tmp_path)
+        fixtures = discover_fixtures(test_file, tmp_path)
         names = {f["name"] for f in fixtures}
         assert names == {"db_session", "client", "auth_token"}
 
@@ -102,7 +102,7 @@ class TestDiscoverFixtures:
         test_file = sub_dir / "test_endpoints.py"
         test_file.write_text("# test", encoding="utf-8")
 
-        fixtures = _discover_fixtures(test_file, tmp_path)
+        fixtures = discover_fixtures(test_file, tmp_path)
         names = {f["name"] for f in fixtures}
         assert "api_fixture" in names
         assert "root_fixture" in names
@@ -116,7 +116,7 @@ class TestDiscoverFixtures:
         test_file = tests_dir / "test_x.py"
         test_file.write_text("# test", encoding="utf-8")
 
-        fixtures = _discover_fixtures(test_file, tmp_path)
+        fixtures = discover_fixtures(test_file, tmp_path)
         by_name = {f["name"]: f for f in fixtures}
         assert by_name["normal"]["has_params"] is False
         assert by_name["data_driven"]["has_params"] is True
@@ -127,7 +127,7 @@ class TestDiscoverFixtures:
         test_file = tests_dir / "test_x.py"
         test_file.write_text("# test", encoding="utf-8")
 
-        fixtures = _discover_fixtures(test_file, tmp_path)
+        fixtures = discover_fixtures(test_file, tmp_path)
         assert fixtures == []
 
     def test_caps_at_10(self, tmp_path):
@@ -137,7 +137,7 @@ class TestDiscoverFixtures:
         test_file = tests_dir / "test_x.py"
         test_file.write_text("# test", encoding="utf-8")
 
-        fixtures = _discover_fixtures(test_file, tmp_path)
+        fixtures = discover_fixtures(test_file, tmp_path)
         assert len(fixtures) <= 10
 
     def test_handles_syntax_error_in_conftest(self, tmp_path):
@@ -149,7 +149,7 @@ class TestDiscoverFixtures:
         test_file.write_text("# test", encoding="utf-8")
 
         # Should not raise, just return empty
-        fixtures = _discover_fixtures(test_file, tmp_path)
+        fixtures = discover_fixtures(test_file, tmp_path)
         assert fixtures == []
 
 
@@ -166,7 +166,7 @@ class TestFindParametrizeExamples:
         test_file = tests_dir / "test_target.py"
         test_file.write_text("# target", encoding="utf-8")
 
-        examples = _find_parametrize_examples(test_file, tmp_path)
+        examples = find_parametrize_examples(test_file, tmp_path)
         assert len(examples) >= 1
         assert "parametrize" in examples[0]["snippet"]
         assert examples[0]["file"] == "test_math.py"
@@ -180,7 +180,7 @@ class TestFindParametrizeExamples:
             encoding="utf-8",
         )
 
-        examples = _find_parametrize_examples(test_file, tmp_path)
+        examples = find_parametrize_examples(test_file, tmp_path)
         assert len(examples) == 0
 
     def test_caps_at_max(self, tmp_path):
@@ -191,7 +191,7 @@ class TestFindParametrizeExamples:
         test_file = tests_dir / "test_target.py"
         test_file.write_text("# target", encoding="utf-8")
 
-        examples = _find_parametrize_examples(test_file, tmp_path, max_examples=2)
+        examples = find_parametrize_examples(test_file, tmp_path, max_examples=2)
         assert len(examples) <= 2
 
     def test_no_siblings_returns_empty(self, tmp_path):
@@ -200,7 +200,7 @@ class TestFindParametrizeExamples:
         test_file = tests_dir / "test_target.py"
         test_file.write_text("# alone", encoding="utf-8")
 
-        examples = _find_parametrize_examples(test_file, tmp_path)
+        examples = find_parametrize_examples(test_file, tmp_path)
         assert examples == []
 
 

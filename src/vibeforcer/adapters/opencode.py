@@ -55,15 +55,15 @@ class OpenCodeAdapter(PlatformAdapter):
 
         if event_name == "PreToolUse":
             if decision in {"deny", "block"}:
-                result: ObjectDict = {
+                blocked_result: ObjectDict = {
                     "action": "block",
                     "reason": self.join_messages(
                         self.decision_findings(findings, decision)
                     ),
                 }
                 if context:
-                    result["context"] = context
-                return result
+                    blocked_result["context"] = context
+                return blocked_result
             if decision == "ask":
                 return {
                     "action": "block",
@@ -72,11 +72,11 @@ class OpenCodeAdapter(PlatformAdapter):
                     ),
                 }
             if decision == "allow" and updated_input:
-                result: ObjectDict = {"action": "allow"}
-                result["updated_args"] = updated_input
+                allowed_result: ObjectDict = {"action": "allow"}
+                allowed_result["updated_args"] = updated_input
                 if context:
-                    result["context"] = context
-                return result
+                    allowed_result["context"] = context
+                return allowed_result
             if context:
                 return {"action": "context", "context": context}
             return None

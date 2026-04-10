@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from vibeforcer.enrichment._helpers import (
-    _append_enrichment_message,
-    _resolve_path,
-    _safe_parse,
-    _safe_read,
+    append_enrichment_message,
+    resolve_path,
+    safe_parse,
+    safe_read,
 )
 
 if TYPE_CHECKING:
@@ -61,11 +61,11 @@ def _load_target_function(
     func_name = _metadata_str(finding.metadata, "function")
     if path_str is None or func_name is None:
         return None
-    full_path = _resolve_path(path_str, ctx.config.root)
-    source = _safe_read(full_path)
+    full_path = resolve_path(path_str, ctx.config.root)
+    source = safe_read(full_path)
     if not source:
         return None
-    tree = _safe_parse(source)
+    tree = safe_parse(source)
     if tree is None:
         return None
     node = _find_function_node(tree, func_name)
@@ -116,7 +116,7 @@ def _build_long_method_extras(node: FunctionNode) -> list[str]:
         extras.append(f"\nNested functions: {names}")
     extras.append(
         "\nSplit strategy: extract each logical block into a named helper "
-        "that does one thing. The parent function becomes an orchestrator."
+        + "that does one thing. The parent function becomes an orchestrator."
     )
     return extras
 
@@ -172,11 +172,11 @@ def _build_long_params_extras(
         )
     extras.append(
         "\nGroup related parameters into a dataclass or TypedDict:\n"
-        "    @dataclass\n"
-        "    class Config:\n"
-        "        param_a: str\n"
-        "        param_b: int\n"
-        "        param_c: bool = True"
+        + "    @dataclass\n"
+        + "    class Config:\n"
+        + "        param_a: str\n"
+        + "        param_b: int\n"
+        + "        param_c: bool = True"
     )
     return extras
 
@@ -227,7 +227,7 @@ def _complexity_tips(breakdown: _ComplexityBreakdown) -> list[str]:
     if breakdown.ifs >= 4:
         tips.append(
             "\nTIP: Multiple if/elif branches → consider a dispatch dict, "
-            "strategy pattern, or match/case (Python 3.10+)."
+            + "strategy pattern, or match/case (Python 3.10+)."
         )
     if breakdown.loops >= 2:
         tips.append(
@@ -236,15 +236,15 @@ def _complexity_tips(breakdown: _ComplexityBreakdown) -> list[str]:
     return tips
 
 
-def _enrich_long_method(finding: RuleFinding, ctx: HookContext) -> None:
+def enrich_long_method(finding: RuleFinding, ctx: HookContext) -> None:
     """Enrich long-method findings with block structure hints."""
     target = _load_target_function(finding, ctx)
     if target is None:
         return
-    _append_enrichment_message(finding, _build_long_method_extras(target.node))
+    append_enrichment_message(finding, _build_long_method_extras(target.node))
 
 
-def _enrich_long_params(finding: RuleFinding, ctx: HookContext) -> None:
+def enrich_long_params(finding: RuleFinding, ctx: HookContext) -> None:
     """Enrich too-many-params findings with grouping suggestions."""
     target = _load_target_function(finding, ctx)
     if target is None:
@@ -252,10 +252,10 @@ def _enrich_long_params(finding: RuleFinding, ctx: HookContext) -> None:
     param_names = _parameter_names(target.node)
     grouped_types = _grouped_type_hints(target.tree)
     extras = _build_long_params_extras(param_names, grouped_types)
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)
 
 
-def _enrich_cyclomatic_complexity(finding: RuleFinding, ctx: HookContext) -> None:
+def enrich_cyclomatic_complexity(finding: RuleFinding, ctx: HookContext) -> None:
     """Enrich complexity findings with a branch breakdown."""
     target = _load_target_function(finding, ctx)
     if target is None:
@@ -266,21 +266,21 @@ def _enrich_cyclomatic_complexity(finding: RuleFinding, ctx: HookContext) -> Non
     if parts:
         extras.append(f"\nComplexity breakdown: {', '.join(parts)}")
     extras.extend(_complexity_tips(breakdown))
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)
 
 
-def _enrich_feature_envy(finding: RuleFinding, ctx: HookContext) -> None:
+def enrich_feature_envy(finding: RuleFinding, ctx: HookContext) -> None:
     """Enrich feature-envy findings with local class/import clues."""
     envied = _metadata_str(finding.metadata, "envied_object")
     path_str = _metadata_str(finding.metadata, "path")
     if envied is None or path_str is None:
         return
-    full_path = _resolve_path(path_str, ctx.config.root)
-    source = _safe_read(full_path)
+    full_path = resolve_path(path_str, ctx.config.root)
+    source = safe_read(full_path)
     if not source:
         return
     extras: list[str] = []
-    tree = _safe_parse(source)
+    tree = safe_parse(source)
     if tree is not None:
         local_classes = [
             node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
@@ -298,19 +298,19 @@ def _enrich_feature_envy(finding: RuleFinding, ctx: HookContext) -> None:
             break
     extras.append(
         f"\nConsider moving this logic to `{envied}`'s class as a method, "
-        f"or restructuring so `{envied}` exposes a higher-level API."
+        + f"or restructuring so `{envied}` exposes a higher-level API."
     )
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)
 
 
-def _enrich_thin_wrapper(finding: RuleFinding, ctx: HookContext) -> None:
+def enrich_thin_wrapper(finding: RuleFinding, ctx: HookContext) -> None:
     """Enrich thin-wrapper findings with inlining guidance."""
     func_name = _metadata_str(finding.metadata, "function")
     path_str = _metadata_str(finding.metadata, "path")
     if func_name is None or path_str is None:
         return
-    full_path = _resolve_path(path_str, ctx.config.root)
-    source = _safe_read(full_path)
+    full_path = resolve_path(path_str, ctx.config.root)
+    source = safe_read(full_path)
     if not source:
         return
     call_count = source.count(f"{func_name}(")
@@ -321,10 +321,10 @@ def _enrich_thin_wrapper(finding: RuleFinding, ctx: HookContext) -> None:
         )
         extras.append(
             f"Replace each `{func_name}(...)` call with a direct call to the wrapped "
-            "function, then remove the wrapper."
+            + "function, then remove the wrapper."
         )
     else:
         extras.append(
             f"\n`{func_name}` appears to be called from other files. Search for all usages before inlining."
         )
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)

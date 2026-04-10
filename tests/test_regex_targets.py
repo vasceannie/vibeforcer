@@ -2,10 +2,11 @@
 
 Covers: command, path, and prompt targets to verify RegexRule routing.
 """
+
 from __future__ import annotations
 
 from vibeforcer.engine import evaluate_payload
-from conftest import BUNDLE_ROOT, finding_ids
+from tests.support import BUNDLE_ROOT, finding_ids
 
 
 class TestCommandTarget:
@@ -27,15 +28,21 @@ class TestCommandTarget:
 
     def test_py_shell_edit_denied(self) -> None:
         result = evaluate_payload(self._bash_payload("sed -i 's/foo/bar/' src/main.py"))
-        assert "PY-SHELL-001" in finding_ids(result), "sed -i on .py must trigger PY-SHELL-001"
+        assert "PY-SHELL-001" in finding_ids(result), (
+            "sed -i on .py must trigger PY-SHELL-001"
+        )
 
     def test_git_commit_gets_context(self) -> None:
         result = evaluate_payload(self._bash_payload("git commit -m 'fix: thing'"))
-        assert "GIT-002" in finding_ids(result), "git commit must trigger GIT-002 context"
+        assert "GIT-002" in finding_ids(result), (
+            "git commit must trigger GIT-002 context"
+        )
 
     def test_safe_command_no_shell_rule(self) -> None:
         result = evaluate_payload(self._bash_payload("npm test"))
-        assert "SHELL-001" not in finding_ids(result), "npm test must not trigger SHELL-001"
+        assert "SHELL-001" not in finding_ids(result), (
+            "npm test must not trigger SHELL-001"
+        )
 
 
 class TestPathTarget:
@@ -53,7 +60,9 @@ class TestPathTarget:
 
     def test_linter_config_path_denied(self) -> None:
         result = evaluate_payload(self._write_payload(".pylintrc"))
-        assert "PY-LINTER-001" in finding_ids(result), ".pylintrc must trigger PY-LINTER-001"
+        assert "PY-LINTER-001" in finding_ids(result), (
+            ".pylintrc must trigger PY-LINTER-001"
+        )
 
     def test_quality_test_path_denied(self) -> None:
         result = evaluate_payload(self._write_payload("tests/quality/test_new.py"))
@@ -70,7 +79,9 @@ class TestPathTarget:
     def test_normal_path_not_flagged(self) -> None:
         result = evaluate_payload(self._write_payload("src/utils/helpers.py"))
         path_rules = {"PY-LINTER-001", "FE-LINTER-001", "QA-PATH-001", "QA-PATH-003"}
-        assert not (finding_ids(result) & path_rules), "normal path must not trigger path rules"
+        assert not (finding_ids(result) & path_rules), (
+            "normal path must not trigger path rules"
+        )
 
 
 class TestBaselineWarnPath:

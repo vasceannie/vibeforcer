@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tests import conftest as test_support
+from tests import support as test_support
 
 from vibeforcer._types import ObjectDict, object_dict, string_value
 from vibeforcer.adapters import get_adapter, ADAPTERS

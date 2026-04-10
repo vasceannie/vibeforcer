@@ -6,34 +6,34 @@ from collections import Counter
 from time import monotonic
 from typing import TYPE_CHECKING, Callable, TypeAlias
 
-from vibeforcer.enrichment._helpers import _get_parse_count, _reset_parse_count
+from vibeforcer.enrichment._helpers import get_parse_count, reset_parse_count
 from vibeforcer.enrichment._types import FixtureInfo, ParametrizeExample
 from vibeforcer.enrichment.code_enrichers import (
-    _enrich_cyclomatic_complexity,
-    _enrich_feature_envy,
-    _enrich_long_method,
-    _enrich_long_params,
-    _enrich_thin_wrapper,
+    enrich_cyclomatic_complexity,
+    enrich_feature_envy,
+    enrich_long_method,
+    enrich_long_params,
+    enrich_thin_wrapper,
 )
 from vibeforcer.enrichment.fixtures import (
-    _discover_fixtures,
-    _find_parametrize_examples,
+    discover_fixtures,
+    find_parametrize_examples,
 )
-from vibeforcer.enrichment.logger_enrichers import _enrich_stdlib_logger
+from vibeforcer.enrichment.logger_enrichers import enrich_stdlib_logger
 from vibeforcer.enrichment.pytest_enrichers import (
-    _enrich_assertion_roulette,
-    _enrich_fixture_outside_conftest,
-    _enrich_test_loop,
-    _enrich_test_smells,
+    enrich_assertion_roulette,
+    enrich_fixture_outside_conftest,
+    enrich_test_loop,
+    enrich_test_smells,
 )
 from vibeforcer.enrichment.quality_enrichers import (
-    _enrich_hardcoded_paths,
-    _enrich_magic_numbers,
+    enrich_hardcoded_paths,
+    enrich_magic_numbers,
 )
-from vibeforcer.enrichment.silent_except import _enrich_silent_except
+from vibeforcer.enrichment.silent_except import enrich_silent_except
 from vibeforcer.enrichment.type_enrichers import (
-    _enrich_python_any,
-    _enrich_type_suppression,
+    enrich_python_any,
+    enrich_type_suppression,
 )
 from vibeforcer.util import warning
 
@@ -46,21 +46,21 @@ Enricher: TypeAlias = Callable[["RuleFinding", "HookContext"], None]
 
 
 _ENRICHERS: dict[str, Enricher] = {
-    "PY-TEST-001": _enrich_assertion_roulette,
-    "PY-TEST-002": _enrich_test_smells,
-    "PY-TEST-003": _enrich_test_loop,
-    "PY-TEST-004": _enrich_fixture_outside_conftest,
-    "PY-TYPE-001": _enrich_python_any,
-    "PY-TYPE-002": _enrich_type_suppression,
-    "PY-CODE-008": _enrich_long_method,
-    "PY-CODE-009": _enrich_long_params,
-    "PY-CODE-012": _enrich_feature_envy,
-    "PY-CODE-013": _enrich_thin_wrapper,
-    "PY-CODE-015": _enrich_cyclomatic_complexity,
-    "PY-EXC-002": _enrich_silent_except,
-    "PY-LOG-001": _enrich_stdlib_logger,
-    "PY-QUALITY-009": _enrich_hardcoded_paths,
-    "PY-QUALITY-010": _enrich_magic_numbers,
+    "PY-TEST-001": enrich_assertion_roulette,
+    "PY-TEST-002": enrich_test_smells,
+    "PY-TEST-003": enrich_test_loop,
+    "PY-TEST-004": enrich_fixture_outside_conftest,
+    "PY-TYPE-001": enrich_python_any,
+    "PY-TYPE-002": enrich_type_suppression,
+    "PY-CODE-008": enrich_long_method,
+    "PY-CODE-009": enrich_long_params,
+    "PY-CODE-012": enrich_feature_envy,
+    "PY-CODE-013": enrich_thin_wrapper,
+    "PY-CODE-015": enrich_cyclomatic_complexity,
+    "PY-EXC-002": enrich_silent_except,
+    "PY-LOG-001": enrich_stdlib_logger,
+    "PY-QUALITY-009": enrich_hardcoded_paths,
+    "PY-QUALITY-010": enrich_magic_numbers,
 }
 
 
@@ -95,7 +95,7 @@ def _metrics_payload(
         "title": "Enrichment metrics",
         "elapsed_ms": elapsed_ms,
         "enrichers_fired": dict(enrichers_fired),
-        "ast_parses": _get_parse_count(),
+        "ast_parses": get_parse_count(),
         "decision": "info",
         "severity": "info",
     }
@@ -105,7 +105,7 @@ def enrich_findings(findings: list["RuleFinding"], ctx: "HookContext") -> None:
     """Enrich findings in-place with project-specific context."""
     enrichers_fired: Counter[str] = Counter()
     start = monotonic()
-    _reset_parse_count()
+    reset_parse_count()
     for finding in findings:
         enricher = _ENRICHERS.get(finding.rule_id)
         if enricher is None:
@@ -138,7 +138,7 @@ def enrich_findings(findings: list["RuleFinding"], ctx: "HookContext") -> None:
 __all__ = [
     "FixtureInfo",
     "ParametrizeExample",
-    "_discover_fixtures",
-    "_find_parametrize_examples",
+    "discover_fixtures",
+    "find_parametrize_examples",
     "enrich_findings",
 ]

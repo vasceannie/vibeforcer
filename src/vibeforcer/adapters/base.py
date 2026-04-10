@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 
 from vibeforcer._types import ObjectDict, ObjectMapping
 from vibeforcer.models import RuleFinding
@@ -28,7 +29,7 @@ class PlatformAdapter(ABC):
     ) -> ObjectDict | None:
         """Render findings into platform-native JSON for stdout."""
 
-    join_messages = staticmethod(_join_messages)
+    join_messages: Callable[[list[RuleFinding]], str] = staticmethod(_join_messages)
 
     @staticmethod
     def decision_findings(

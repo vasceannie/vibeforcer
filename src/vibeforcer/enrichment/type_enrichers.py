@@ -6,8 +6,8 @@ import re
 from typing import TYPE_CHECKING
 
 from vibeforcer.enrichment._helpers import (
-    _append_enrichment_message,
-    _first_target_content,
+    append_enrichment_message,
+    first_target_content,
 )
 
 if TYPE_CHECKING:
@@ -34,9 +34,9 @@ def _is_duck_typed_class(content: str) -> bool:
     )
 
 
-def _enrich_python_any(finding: "RuleFinding", ctx: "HookContext") -> None:
+def enrich_python_any(finding: "RuleFinding", ctx: "HookContext") -> None:
     """Enrich PY-TYPE-001 with nearby type pattern hints."""
-    content_hint = _first_target_content(ctx)
+    content_hint = first_target_content(ctx)
     if not content_hint:
         return
 
@@ -45,23 +45,23 @@ def _enrich_python_any(finding: "RuleFinding", ctx: "HookContext") -> None:
     if _is_dict_or_mapping(lower):
         extras.append(
             "\nTIP: For dict-like structures, consider TypedDict:\n"
-            "    class UserData(TypedDict):\n"
-            "        name: str\n"
-            "        email: str"
+            + "    class UserData(TypedDict):\n"
+            + "        name: str\n"
+            + "        email: str"
         )
     if _is_callback_or_handler(lower):
         extras.append(
             "\nTIP: For callbacks/handlers, use Callable with specific signatures:\n"
-            "    Callable[[str, int], bool]"
+            + "    Callable[[str, int], bool]"
         )
     if _is_duck_typed_class(lower):
         extras.append(
             "\nTIP: For duck-typed interfaces, define a Protocol:\n"
-            "    class Readable(Protocol):\n"
-            "        def read(self, n: int = -1) -> bytes: ..."
+            + "    class Readable(Protocol):\n"
+            + "        def read(self, n: int = -1) -> bytes: ..."
         )
 
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)
 
 
 _HASH = "#"
@@ -138,9 +138,9 @@ def _suppression_advice(suppression: str) -> str | None:
     return None
 
 
-def _enrich_type_suppression(finding: "RuleFinding", ctx: "HookContext") -> None:
+def enrich_type_suppression(finding: "RuleFinding", ctx: "HookContext") -> None:
     """Enrich suppression findings with concrete fix hints."""
-    content = _first_target_content(ctx)
+    content = first_target_content(ctx)
     if not content:
         return
     suppressions = _collect_suppressions(content)
@@ -151,4 +151,4 @@ def _enrich_type_suppression(finding: "RuleFinding", ctx: "HookContext") -> None
         advice = _suppression_advice(suppression)
         if advice is not None:
             extras.append(advice)
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)

@@ -6,9 +6,9 @@ import ast
 from typing import TYPE_CHECKING
 
 from vibeforcer.enrichment._helpers import (
-    _append_enrichment_message,
-    _first_target_content,
-    _safe_parse,
+    append_enrichment_message,
+    first_target_content,
+    safe_parse,
 )
 
 if TYPE_CHECKING:
@@ -36,17 +36,17 @@ def _extract_called_functions(tree: ast.AST) -> list[str]:
     return unique[:5]
 
 
-def _enrich_silent_except(finding: RuleFinding, ctx: HookContext) -> None:
+def enrich_silent_except(finding: RuleFinding, ctx: HookContext) -> None:
     """Enrich PY-EXC-002 with specific exception guidance."""
     paths = finding.metadata.get("hits", [])
     if not paths:
         return
 
-    content = _first_target_content(ctx)
+    content = first_target_content(ctx)
     extras: list[str] = []
 
     if content:
-        tree = _safe_parse(content)
+        tree = safe_parse(content)
         if tree is not None:
             called = _extract_called_functions(tree)
             if called:
@@ -58,10 +58,10 @@ def _enrich_silent_except(finding: RuleFinding, ctx: HookContext) -> None:
 
     extras.append(
         "\nCommon specific exceptions:\n"
-        "  • File I/O: `FileNotFoundError`, `PermissionError`, `IsADirectoryError`\n"
-        "  • Network: `ConnectionError`, `TimeoutError`, `httpx.HTTPError`\n"
-        "  • Parsing: `json.JSONDecodeError`, `ValueError`, `KeyError`\n"
-        "  • Encoding: `UnicodeDecodeError`, `UnicodeEncodeError`"
+        + "  • File I/O: `FileNotFoundError`, `PermissionError`, `IsADirectoryError`\n"
+        + "  • Network: `ConnectionError`, `TimeoutError`, `httpx.HTTPError`\n"
+        + "  • Parsing: `json.JSONDecodeError`, `ValueError`, `KeyError`\n"
+        + "  • Encoding: `UnicodeDecodeError`, `UnicodeEncodeError`"
     )
 
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)

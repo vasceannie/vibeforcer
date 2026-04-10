@@ -14,7 +14,7 @@ def _assert_denied_by(
     test: unittest.TestCase,
     result: EngineResult,
     rule_id: str,
-    msg: str = "",
+    _msg: str = "",
 ) -> None:
     test.assertIsNotNone(result.output)
     assert result.output is not None

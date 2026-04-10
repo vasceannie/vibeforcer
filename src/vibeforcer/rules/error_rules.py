@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
 from vibeforcer._types import object_dict, string_value
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule
@@ -147,7 +149,9 @@ _ERROR_PATTERNS = [
     # Python tracebacks
     re.compile(r"Traceback \(most recent call last\)"),
     re.compile(
-        r"(?:SyntaxError|TypeError|NameError|ValueError|AttributeError|ImportError|KeyError|IndexError|RuntimeError|AssertionError|FileNotFoundError|ModuleNotFoundError|OSError|PermissionError):",
+        r"(?:SyntaxError|TypeError|NameError|ValueError|AttributeError"
+        r"|ImportError|KeyError|IndexError|RuntimeError|AssertionError"
+        r"|FileNotFoundError|ModuleNotFoundError|OSError|PermissionError):",
         re.MULTILINE,
     ),
     # Lint / type-check
@@ -223,6 +227,16 @@ _FAILURE_CONTEXT = (
 # ── Rules ───────────────────────────────────────────────────────────────
 
 
+def _extract_bash_output(ctx: HookContext) -> str:
+    """Return combined stdout+stderr from a PostToolUse payload, or empty string."""
+    tool_response = object_dict(ctx.payload.payload.get("tool_response"))
+    if not tool_response:
+        return ""
+    stdout = string_value(tool_response.get("stdout")) or ""
+    stderr = string_value(tool_response.get("stderr")) or ""
+    return f"{stdout}\n{stderr}".strip()
+
+
 class BashOutputErrorRule(Rule):
     """Detect errors in Bash output even when exit code is 0.
 
@@ -230,51 +244,32 @@ class BashOutputErrorRule(Rule):
     eslint --max-warnings, etc.) exit 0 despite reporting errors.
     """
 
-    rule_id = "ERRORS-BASH-001"
-    title = "Bash output error interceptor"
-    events = ("PostToolUse",)
+    rule_id: str = "ERRORS-BASH-001"
+    title: str = "Bash output error interceptor"
+    events: tuple[str, ...] = ("PostToolUse",)
 
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
+    @override
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         enabled = ctx.config.enabled_rules.get(self.rule_id)
         if enabled is not None and not enabled:
             return []
-
-        # Only Bash tool
         if not ctx.tool_name or ctx.tool_name != "Bash":
             return []
-
         command = ctx.bash_command
-        if not command:
+        if not command or _is_read_only_command(command):
             return []
-
-        # Skip read-only commands
-        if _is_read_only_command(command):
+        output = _extract_bash_output(ctx)
+        if not output or not _has_error_signals(output):
             return []
-
-        # Get stdout from tool_response
-        tool_response = object_dict(ctx.payload.payload.get("tool_response"))
-        if not tool_response:
-            return []
-
-        stdout = string_value(tool_response.get("stdout")) or ""
-        stderr = string_value(tool_response.get("stderr")) or ""
-        output = f"{stdout}\n{stderr}".strip()
-
-        if not output:
-            return []
-
-        if _has_error_signals(output):
-            return [
-                RuleFinding(
-                    rule_id=self.rule_id,
-                    title=self.title,
-                    severity=Severity.HIGH,
-                    additional_context=_ERROR_CONTEXT,
-                    metadata={"command": command[:200]},
-                )
-            ]
-
-        return []
+        return [
+            RuleFinding(
+                rule_id=self.rule_id,
+                title=self.title,
+                severity=Severity.HIGH,
+                additional_context=_ERROR_CONTEXT,
+                metadata={"command": command[:200]},
+            )
+        ]
 
 
 class BashFailureReinforcementRule(Rule):

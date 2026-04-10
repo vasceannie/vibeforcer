@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import cast
 
-from vibeforcer._types import ObjectDict, object_dict
+from vibeforcer._types import object_dict
 
 
 def _find_binary() -> str:
@@ -79,9 +80,8 @@ def _install_claude(dry_run: bool = False) -> int:
     # Load existing settings or start fresh
     if settings_path.exists():
         try:
-            settings = object_dict(
-                json.loads(settings_path.read_text(encoding="utf-8"))
-            )
+            parsed = cast(object, json.loads(settings_path.read_text(encoding="utf-8")))
+            settings = object_dict(parsed)
         except json.JSONDecodeError:
             settings = {}
     else:
@@ -89,7 +89,9 @@ def _install_claude(dry_run: bool = False) -> int:
         settings = {}
 
     settings["hooks"] = hooks
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    _ = settings_path.write_text(
+        json.dumps(settings, indent=2) + "\n", encoding="utf-8"
+    )
     print(f"Installed vibeforcer hooks into {settings_path}")
     print(f"Binary: {binary}")
     print(f"Events: {len(_CLAUDE_EVENTS)}")
@@ -102,7 +104,8 @@ def _uninstall_claude(dry_run: bool = False) -> int:
         print("No Claude settings found.")
         return 0
 
-    settings = object_dict(json.loads(settings_path.read_text(encoding="utf-8")))
+    parsed = cast(object, json.loads(settings_path.read_text(encoding="utf-8")))
+    settings = object_dict(parsed)
     if "hooks" not in settings:
         print("No hooks found in Claude settings.")
         return 0
@@ -112,7 +115,9 @@ def _uninstall_claude(dry_run: bool = False) -> int:
         return 0
 
     del settings["hooks"]
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    _ = settings_path.write_text(
+        json.dumps(settings, indent=2) + "\n", encoding="utf-8"
+    )
     print(f"Removed vibeforcer hooks from {settings_path}")
     return 0
 
@@ -183,20 +188,22 @@ def _install_codex(dry_run: bool = False) -> int:
 
     if hooks_path.exists():
         try:
-            existing = object_dict(json.loads(hooks_path.read_text(encoding="utf-8")))
+            parsed = cast(object, json.loads(hooks_path.read_text(encoding="utf-8")))
+            existing = object_dict(parsed)
         except json.JSONDecodeError:
             existing = {}
     else:
         existing = {}
 
     existing["hooks"] = hooks
-    hooks_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    _ = hooks_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
     # Enable hooks feature flag
     config_path = Path.home() / ".codex" / "config.json"
     if config_path.exists():
         try:
-            config = object_dict(json.loads(config_path.read_text(encoding="utf-8")))
+            parsed = cast(object, json.loads(config_path.read_text(encoding="utf-8")))
+            config = object_dict(parsed)
         except json.JSONDecodeError:
             config = {}
     else:
@@ -205,7 +212,7 @@ def _install_codex(dry_run: bool = False) -> int:
     features = object_dict(config.get("features"))
     features["hooks"] = True
     config["features"] = features
-    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    _ = config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     print(f"Installed vibeforcer hooks into {hooks_path}")
     print(f"Enabled hooks feature flag in {config_path}")
@@ -256,7 +263,7 @@ def _install_opencode(dry_run: bool = False) -> int:
         return 0
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    _ = target.write_text(content, encoding="utf-8")
     print(f"Installed vibeforcer plugin to {target}")
     print(f"Binary: {binary}")
     return 0

@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vibeforcer.enrichment._helpers import (
-    _append_enrichment_message,
-    _relative_path,
-    _safe_read,
+    append_enrichment_message,
+    relative_path,
+    safe_read,
 )
 
 if TYPE_CHECKING:
@@ -40,13 +40,13 @@ def _dependency_hints(root: Path) -> list[str]:
 
 def _dependency_in_requirements(root: Path, name: str) -> bool:
     for req_file in root.glob("requirements*.txt"):
-        if name in _safe_read(req_file, max_bytes=10_000).lower():
+        if name in safe_read(req_file, max_bytes=10_000).lower():
             return True
     return False
 
 
 def _dependency_in_pyproject(root: Path, name: str) -> bool:
-    return name in _safe_read(root / "pyproject.toml", max_bytes=30_000).lower()
+    return name in safe_read(root / "pyproject.toml", max_bytes=30_000).lower()
 
 
 def _candidate_logger_path(root: Path) -> Path | None:
@@ -58,7 +58,7 @@ def _candidate_logger_path(root: Path) -> Path | None:
 
 
 def _first_logger_pattern(candidate: Path) -> str | None:
-    content = _safe_read(candidate, max_bytes=5_000)
+    content = safe_read(candidate, max_bytes=5_000)
     if not content:
         return None
 
@@ -96,13 +96,13 @@ def _append_logger_path_hints(extras: list[str], root: Path) -> None:
     if candidate is None:
         return
 
-    extras.append(f"\nProject logger found at: `{_relative_path(candidate, root)}`")
+    extras.append(f"\nProject logger found at: `{relative_path(candidate, root)}`")
     pattern = _first_logger_pattern(candidate)
     if pattern is not None:
         extras.append(f"  Pattern: `{pattern}`")
 
 
-def _enrich_stdlib_logger(finding: RuleFinding, ctx: HookContext) -> None:
+def enrich_stdlib_logger(finding: RuleFinding, ctx: HookContext) -> None:
     """Enrich PY-LOG-001 by finding project logging abstractions."""
 
     extras: list[str] = []
@@ -114,7 +114,7 @@ def _enrich_stdlib_logger(finding: RuleFinding, ctx: HookContext) -> None:
     if not extras:
         extras.append(
             "\nNo project logger abstraction found. Consider creating one, "
-            "or use structlog/loguru instead of stdlib logging."
+            + "or use structlog/loguru instead of stdlib logging."
         )
 
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)

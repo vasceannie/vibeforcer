@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from typing import cast
 
 from vibeforcer.enrichment._helpers import (
-    _append_enrichment_message,
-    _relative_path,
-    _resolve_path,
-    _safe_read,
+    append_enrichment_message,
+    relative_path,
+    resolve_path,
+    safe_read,
 )
 
 if TYPE_CHECKING:
@@ -52,13 +53,14 @@ def _metadata_source_paths(finding: RuleFinding, root: Path) -> list[Path]:
 
     file_path = finding.metadata.get("file_path")
     if isinstance(file_path, str) and file_path:
-        paths.append(_resolve_path(file_path, root))
+        paths.append(resolve_path(file_path, root))
 
     hits = finding.metadata.get("hits")
     if isinstance(hits, list):
-        for hit in hits:
+        raw_hits = cast(list[object], hits)
+        for hit in raw_hits:
             if isinstance(hit, str) and hit:
-                paths.append(_resolve_path(hit, root))
+                paths.append(resolve_path(hit, root))
 
     unique: list[Path] = []
     seen: set[str] = set()
@@ -94,39 +96,39 @@ def _iter_path_config_candidates(root: Path) -> list[Path]:
     return candidates
 
 
-def _enrich_magic_numbers(finding: RuleFinding, ctx: HookContext) -> None:
+def enrich_magic_numbers(finding: RuleFinding, ctx: HookContext) -> None:
     """Enrich PY-QUALITY-010 with constants-module hints."""
 
     extras: list[str] = []
     for source_path in _metadata_source_paths(finding, ctx.config.root):
         constants_file = _find_constants_module(source_path, ctx.config.root)
         if constants_file is not None:
-            relative = _relative_path(constants_file, ctx.config.root)
+            relative = relative_path(constants_file, ctx.config.root)
             extras.append(f"\nProject constants module found: `{relative}`")
             break
 
     if not extras:
         extras.append(
             "\nDefine repeated literals in a constants/config module "
-            "instead of inline magic values."
+            + "instead of inline magic values."
         )
 
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)
 
 
-def _enrich_hardcoded_paths(finding: RuleFinding, ctx: HookContext) -> None:
+def enrich_hardcoded_paths(finding: RuleFinding, ctx: HookContext) -> None:
     """Enrich PY-QUALITY-009 with central path-config hints."""
 
     extras: list[str] = []
     for candidate in _iter_path_config_candidates(ctx.config.root):
-        content = _safe_read(candidate, max_bytes=10_000)
+        content = safe_read(candidate, max_bytes=10_000)
         if not content:
             continue
         lines = _path_hint_lines(content)
         if not lines:
             continue
 
-        relative = _relative_path(candidate, ctx.config.root)
+        relative = relative_path(candidate, ctx.config.root)
         extras.append(f"\nPath configuration found in `{relative}`:")
         extras.extend(f"  {line}" for line in lines)
         break
@@ -134,7 +136,7 @@ def _enrich_hardcoded_paths(finding: RuleFinding, ctx: HookContext) -> None:
     if not extras:
         extras.append(
             "\nNo central path config found. Consider defining paths in a config module "
-            "or using environment variables."
+            + "or using environment variables."
         )
 
-    _append_enrichment_message(finding, extras)
+    append_enrichment_message(finding, extras)

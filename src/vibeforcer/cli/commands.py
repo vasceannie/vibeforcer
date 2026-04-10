@@ -5,6 +5,7 @@ import json
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import cast
 
 from vibeforcer._types import ObjectDict, ObjectMapping, object_dict
 from vibeforcer.constants import SELFTEST_SEPARATOR_WIDTH
@@ -12,7 +13,7 @@ from vibeforcer.models import EngineResult
 
 VALID_PLATFORMS = ("claude", "codex", "opencode")
 PlatformName = str
-_PLATFORM_HELP = (
+PLATFORM_HELP = (
     f"Target platform. Choices: {', '.join(VALID_PLATFORMS)} (default: claude)"
 )
 
@@ -21,12 +22,28 @@ def _load_stdin_json() -> ObjectDict:
     raw = sys.stdin.read()
     if not raw.strip():
         return {}
-    return object_dict(json.loads(raw))
+    parsed = cast(object, json.loads(raw))
+    return object_dict(parsed)
+
+
+def _string_arg(args: argparse.Namespace, name: str, default: str = "") -> str:
+    value = getattr(args, name, default)
+    return value if isinstance(value, str) else default
+
+
+def _bool_arg(args: argparse.Namespace, name: str, default: bool = False) -> bool:
+    value = getattr(args, name, default)
+    return value if isinstance(value, bool) else default
+
+
+def _int_arg(args: argparse.Namespace, name: str) -> int | None:
+    value = getattr(args, name, None)
+    return value if isinstance(value, int) else None
 
 
 def _dump_output(output: ObjectMapping | None) -> int:
     if output:
-        sys.stdout.write(json.dumps(output, separators=(",", ":")) + "\n")
+        _ = sys.stdout.write(json.dumps(output, separators=(",", ":")) + "\n")
     return 0
 
 
@@ -36,7 +53,7 @@ def cmd_handle(args: argparse.Namespace) -> int:
     payload = _load_stdin_json()
     if not payload:
         return 0
-    platform = getattr(args, "platform", "claude")
+    platform = _string_arg(args, "platform", "claude")
     result = evaluate_payload(payload, platform=platform)
     return _dump_output(result.output)
 
@@ -47,14 +64,14 @@ def cmd_handle_async(_args: argparse.Namespace) -> int:
     payload = _load_stdin_json()
     summary, _errors = run_async_jobs(payload)
     if summary:
-        sys.stdout.write(summary + "\n")
+        _ = sys.stdout.write(summary + "\n")
     return 0
 
 
 def cmd_check(args: argparse.Namespace) -> int:
     from vibeforcer.config import is_path_skipped, is_repo_disabled, load_config
 
-    target = Path(args.path).resolve()
+    target = Path(_string_arg(args, "path", ".")).resolve()
     config = load_config()
     disabled = is_repo_disabled(target)
     skipped = is_path_skipped(target, config.skip_paths)
@@ -77,10 +94,12 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_replay(args: argparse.Namespace) -> int:
     from vibeforcer.engine import evaluate_payload
 
-    payload = object_dict(json.loads(Path(args.payload).read_text(encoding="utf-8")))
-    platform = getattr(args, "platform", "claude")
+    payload_path = Path(_string_arg(args, "payload")).resolve()
+    parsed = cast(object, json.loads(payload_path.read_text(encoding="utf-8")))
+    payload = object_dict(parsed)
+    platform = _string_arg(args, "platform", "claude")
     result = evaluate_payload(payload, platform=platform)
-    if args.pretty:
+    if _bool_arg(args, "pretty"):
         print(json.dumps(result.output, indent=2))
     else:
         print(json.dumps(result.output, separators=(",", ":")))
@@ -90,22 +109,28 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def cmd_install(args: argparse.Namespace) -> int:
     from vibeforcer.installer import install_platform
 
-    return install_platform(args.platform, dry_run=args.dry_run)
+    return install_platform(
+        _string_arg(args, "platform"),
+        dry_run=_bool_arg(args, "dry_run"),
+    )
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
     from vibeforcer.installer import uninstall_platform
 
-    return uninstall_platform(args.platform, dry_run=args.dry_run)
+    return uninstall_platform(
+        _string_arg(args, "platform"),
+        dry_run=_bool_arg(args, "dry_run"),
+    )
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
     from vibeforcer.stats import run_stats
 
     return run_stats(
-        log_path=args.log if args.log else None,
-        days=args.days,
-        as_json=args.json,
+        log_path=_string_arg(args, "log") or None,
+        days=_int_arg(args, "days"),
+        as_json=_bool_arg(args, "json"),
     )
 
 
@@ -149,7 +174,7 @@ def _copy_prompt_context(base_dir: Path, resource_path: Callable[[str], Path]) -
     for name in ("organization.md", "repo.md"):
         src = resource_path("prompt_context") / name
         if src.exists():
-            (ctx_dir / name).write_text(
+            _ = (ctx_dir / name).write_text(
                 src.read_text(encoding="utf-8"), encoding="utf-8"
             )
     print(f"Created: {ctx_dir}")
@@ -160,14 +185,14 @@ def cmd_config_init(args: argparse.Namespace) -> int:
     from vibeforcer.resources import resource_path
 
     target = config_dir() / "config.json"
-    if target.exists() and not args.force:
+    if target.exists() and not _bool_arg(args, "force"):
         print(f"Config already exists: {target}")
         print("Use --force to overwrite.")
         return 1
 
     defaults_path = resource_path("defaults.json")
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(defaults_path.read_text(encoding="utf-8"), encoding="utf-8")
+    _ = target.write_text(defaults_path.read_text(encoding="utf-8"), encoding="utf-8")
     print(f"Created: {target}")
 
     log_dir = config_dir() / "logs"
