@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from vibeforcer._types import bool_value, object_dict, string_value
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule, is_rule_enabled
 
@@ -465,13 +466,13 @@ class ConfigChangeGuardRule(Rule):
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id):
             return []
-        source = ctx.payload.payload.get("source", "")
+        source = string_value(ctx.payload.payload.get("source")) or ""
         if source not in _CONFIG_BLOCKED_SOURCES:
             return []
-        changes = ctx.payload.payload.get("changes", {})
-        if not isinstance(changes, dict):
+        changes = object_dict(ctx.payload.payload.get("changes"))
+        if not changes:
             return []
-        if changes.get("disableAllHooks") is True:
+        if bool_value(changes.get("disableAllHooks")) is True:
             return [
                 RuleFinding(
                     rule_id=self.rule_id,

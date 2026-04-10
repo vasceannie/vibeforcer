@@ -15,12 +15,17 @@ from pathlib import Path
 import pytest
 
 from vibeforcer.engine import evaluate_payload
-from conftest import (
+from tests.conftest import (
     BUNDLE_ROOT,
     assert_blocked,
     assert_denied_by,
     assert_not_denied,
     finding_ids,
+    hook_output,
+    nested_output,
+    output_string,
+    require_output,
+    required_string,
 )
 
 
@@ -65,32 +70,27 @@ class TestMultiRuleDenyFixtures:
     def test_default_swallow(self, load_fixture):
         """PY-EXC-001 or PY-QUALITY-005 may fire on log+return-default."""
         result = evaluate_payload(load_fixture("pretool_default_swallow.json"))
-        assert result.output is not None
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = required_string(hook_output(result), "permissionDecisionReason")
         assert "PY-QUALITY-005" in reason or "PY-EXC-001" in reason
 
     def test_fe_linter(self, load_fixture):
         result = evaluate_payload(load_fixture("pretool_fe_linter.json"))
-        assert result.output is not None
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = required_string(hook_output(result), "permissionDecisionReason")
         assert "FE-LINTER-001" in reason or "BUILTIN-PROTECTED-PATHS" in reason
 
     def test_design_tokens(self, load_fixture):
         result = evaluate_payload(load_fixture("pretool_design_tokens.json"))
-        assert result.output is not None
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = required_string(hook_output(result), "permissionDecisionReason")
         assert "STYLE-004" in reason or "STYLE-005" in reason
 
     def test_shell_bypass(self, load_fixture):
         result = evaluate_payload(load_fixture("pretool_shell_bypass.json"))
-        assert result.output is not None
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = required_string(hook_output(result), "permissionDecisionReason")
         assert "SHELL-001" in reason or "GLOBAL-BUILTIN-SYSTEM-PROTECTION" in reason
 
     def test_quality_test_path(self, load_fixture):
         result = evaluate_payload(load_fixture("pretool_quality_test_path.json"))
-        assert result.output is not None
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = required_string(hook_output(result), "permissionDecisionReason")
         assert "QA-PATH-003" in reason or "BUILTIN-PROTECTED-PATHS" in reason
 
 
@@ -359,7 +359,7 @@ class TestEdgeCases:
 
 
 class TestBaselineGuard:
-    def _write_baseline(self, tmp_path: Path, rules: dict) -> Path:
+    def _write_baseline(self, tmp_path: Path, rules: dict[str, list[str]]) -> Path:
         p = tmp_path / "baselines.json"
         p.write_text(
             json.dumps(
@@ -423,10 +423,9 @@ def test_permission_request_denies_makefile(bundle_root):
         "tool_input": {"file_path": "Makefile", "content": "all:\n\techo hi\n"},
     }
     result = evaluate_payload(payload)
-    assert result.output is not None
-    inner = result.output["hookSpecificOutput"]["decision"]
+    inner = nested_output(hook_output(result), "decision")
     assert inner["behavior"] == "deny"
-    assert "BUILTIN-PROTECTED-PATHS" in inner.get("message", "")
+    assert "BUILTIN-PROTECTED-PATHS" in output_string(inner, "message")
 
 
 # ===========================================================================
@@ -442,10 +441,9 @@ def test_prompt_injects_context(bundle_root):
         "prompt": "refactor the auth module",
     }
     result = evaluate_payload(payload)
-    assert result.output is not None
-    spec = result.output["hookSpecificOutput"]
+    spec = hook_output(result)
     assert spec["hookEventName"] == "UserPromptSubmit"
-    ctx = spec["additionalContext"]
+    ctx = required_string(spec, "additionalContext")
     assert "Organization prompt context" in ctx
     assert "Repository Rules" in ctx
 
@@ -469,8 +467,9 @@ def test_long_param_list_blocks(tmp_project):
     }
     result = evaluate_payload(payload)
     assert_blocked(result)
-    assert "PY-CODE-009" in result.output["reason"]
-    assert "parameters" in result.output["reason"].lower()
+    reason = required_string(require_output(result), "reason")
+    assert "PY-CODE-009" in reason
+    assert "parameters" in reason.lower()
 
 
 # ===========================================================================
@@ -502,11 +501,10 @@ def test_clean_stop_gets_quality_reminder(bundle_root):
         "stop_response": "All tasks completed successfully.",
     }
     result = evaluate_payload(payload)
-    assert result.output is not None
-    assert result.output.get("decision") != "block"
-    ctx = result.output.get(
-        "systemMessage",
-        result.output.get("hookSpecificOutput", {}).get("additionalContext", ""),
+    output = require_output(result)
+    assert output_string(output, "decision") != "block"
+    ctx = output_string(output, "systemMessage") or output_string(
+        hook_output(result), "additionalContext"
     )
     assert "quality" in ctx.lower(), f"Expected quality reminder, got: {ctx}"
 
@@ -520,10 +518,9 @@ def test_git_commit_gets_quality_context(bundle_root):
         "tool_input": {"command": "git commit -m 'fix: something'"},
     }
     result = evaluate_payload(payload)
-    assert result.output is not None
-    ctx = result.output.get(
-        "systemMessage",
-        result.output.get("hookSpecificOutput", {}).get("additionalContext", ""),
+    output = require_output(result)
+    ctx = output_string(output, "systemMessage") or output_string(
+        hook_output(result), "additionalContext"
     )
     assert "quality" in ctx.lower()
     assert "GIT-002" in finding_ids(result)
@@ -623,10 +620,9 @@ def test_sessionstart_injects_git_context(tmp_path):
     )
     payload = {"session_id": "s", "cwd": str(repo), "hook_event_name": "SessionStart"}
     result = evaluate_payload(payload)
-    assert result.output is not None
-    spec = result.output["hookSpecificOutput"]
+    spec = hook_output(result)
     assert spec["hookEventName"] == "SessionStart"
-    ctx = spec["additionalContext"]
+    ctx = required_string(spec, "additionalContext")
     assert "commits" in ctx.lower()
     assert "branch" in ctx.lower()
 
@@ -639,10 +635,9 @@ def test_sessionstart_injects_git_context_from_worktree(tmp_path):
         "hook_event_name": "SessionStart",
     }
     result = evaluate_payload(payload)
-    assert result.output is not None
-    spec = result.output["hookSpecificOutput"]
+    spec = hook_output(result)
     assert spec["hookEventName"] == "SessionStart"
-    ctx = spec["additionalContext"]
+    ctx = required_string(spec, "additionalContext")
     assert "current branch" in ctx.lower()
     assert "feature/worktree-support" in ctx
     assert "recent commits" in ctx.lower()
@@ -684,7 +679,7 @@ def test_policy_settings_allowed(load_fixture):
 def test_large_file_warns(pretool_write):
     result = evaluate_payload(pretool_write("src/giant.py", "x = 1\n" * 60000))
     assert "WARN-LARGE-001" in finding_ids(result)
-    ctx = result.output["hookSpecificOutput"]["additionalContext"]
+    ctx = required_string(hook_output(result), "additionalContext")
     assert "giant.py" in ctx
     assert "characters" in ctx.lower()
 
@@ -847,17 +842,22 @@ def test_no_hookSpecificOutput_on_banned_events(bundle_root, event_name, extra_f
 
 def test_stop_blocking_uses_top_level_decision(load_fixture):
     result = evaluate_payload(load_fixture("stop_preexisting.json"))
-    assert result.output["decision"] == "block"
-    assert "reason" in result.output
-    assert "hookSpecificOutput" not in result.output
-    assert "permissionDecision" not in result.output
+    output = require_output(result)
+    assert output["decision"] == "block", f"Expected block output, got: {output}"
+    assert "reason" in output, f"Expected reason in output, got: {output}"
+    assert "hookSpecificOutput" not in output, (
+        f"Unexpected hookSpecificOutput: {output}"
+    )
+    assert "permissionDecision" not in output, (
+        f"Unexpected permissionDecision: {output}"
+    )
 
 
 def test_pretooluse_uses_hookSpecificOutput(load_fixture):
     result = evaluate_payload(load_fixture("pretool_git_no_verify.json"))
-    spec = result.output["hookSpecificOutput"]
-    assert spec["hookEventName"] == "PreToolUse"
-    assert "permissionDecision" in spec
+    spec = hook_output(result)
+    assert spec["hookEventName"] == "PreToolUse", f"Wrong hook event payload: {spec}"
+    assert "permissionDecision" in spec, f"Missing permissionDecision: {spec}"
 
 
 def test_permission_request_uses_decision_behavior(bundle_root):
@@ -869,9 +869,13 @@ def test_permission_request_uses_decision_behavior(bundle_root):
         "tool_input": {"command": "git commit --no-verify -m x"},
     }
     result = evaluate_payload(payload)
-    spec = result.output["hookSpecificOutput"]
-    assert spec["hookEventName"] == "PermissionRequest"
-    assert spec["decision"]["behavior"] == "deny"
+    spec = hook_output(result)
+    assert spec["hookEventName"] == "PermissionRequest", (
+        f"Wrong hook event payload: {spec}"
+    )
+    assert nested_output(spec, "decision")["behavior"] == "deny", (
+        f"Wrong decision payload: {spec}"
+    )
 
 
 def test_stop_clean_uses_systemMessage(bundle_root):
@@ -882,16 +886,21 @@ def test_stop_clean_uses_systemMessage(bundle_root):
         "stop_response": "Done.",
     }
     result = evaluate_payload(payload)
-    assert result.output is not None
-    assert "systemMessage" in result.output
-    assert "hookSpecificOutput" not in result.output
+    output = require_output(result)
+    assert "systemMessage" in output, f"Expected systemMessage output, got: {output}"
+    assert "hookSpecificOutput" not in output, (
+        f"Unexpected hookSpecificOutput: {output}"
+    )
 
 
 def test_configchange_uses_decision_and_reason(load_fixture):
     result = evaluate_payload(load_fixture("configchange_disable_hooks.json"))
-    assert "decision" in result.output
-    assert "reason" in result.output
-    assert "permissionDecision" not in result.output
+    output = require_output(result)
+    assert "decision" in output, f"Expected decision in output, got: {output}"
+    assert "reason" in output, f"Expected reason in output, got: {output}"
+    assert "permissionDecision" not in output, (
+        f"Unexpected permissionDecision: {output}"
+    )
 
 
 def test_all_outputs_valid_json_shape(load_fixture):
@@ -906,9 +915,9 @@ def test_all_outputs_valid_json_shape(load_fixture):
                 assert key in VALID_TOP_LEVEL_KEYS, (
                     f"{fixture_file.name}: unknown key '{key}'"
                 )
-            spec = result.output.get("hookSpecificOutput")
-            if spec is not None:
-                assert spec.get("hookEventName") == event, (
+            spec = hook_output(result)
+            if spec:
+                assert output_string(spec, "hookEventName") == event, (
                     f"{fixture_file.name}: hookEventName mismatch"
                 )
 
@@ -967,7 +976,7 @@ class TestLangGraph:
         findings = [f for f in result.findings if f.rule_id == "LG-STATE-001"]
         if should_flag:
             assert findings, "Should flag bare list field"
-            assert "messages" in findings[0].additional_context
+            assert "messages" in (findings[0].additional_context or "")
             assert findings[0].decision is None, "Must be advisory"
         else:
             assert not findings
@@ -1021,7 +1030,7 @@ class TestLangGraph:
         result = evaluate_payload(payload)
         findings = [f for f in result.findings if f.rule_id == "LG-API-001"]
         assert findings
-        assert "add_edge(START" in findings[0].additional_context
+        assert "add_edge(START" in (findings[0].additional_context or "")
 
     def test_add_edge_start_not_flagged(self, tmp_project):
         code = (
@@ -1529,7 +1538,7 @@ def test_stop_002_fires_on_clean_stop(bundle_root):
     result = evaluate_payload(payload)
     findings = [f for f in result.findings if f.rule_id == "STOP-002"]
     assert findings
-    assert "vibeforcer lint check" in findings[0].additional_context
+    assert "vibeforcer lint check" in (findings[0].additional_context or "")
 
 
 def test_stop_002_fires_on_subagent_stop(bundle_root):
@@ -1542,7 +1551,7 @@ def test_stop_002_fires_on_subagent_stop(bundle_root):
     result = evaluate_payload(payload)
     findings = [f for f in result.findings if f.rule_id == "STOP-002"]
     assert findings
-    assert "vibeforcer lint check" in findings[0].additional_context
+    assert "vibeforcer lint check" in (findings[0].additional_context or "")
 
 
 # ===========================================================================
@@ -1635,8 +1644,8 @@ def test_py_code_012_feature_envy(tmp_project):
     if findings_012:
         assert findings_012[0].decision is None, "Must be advisory"
         assert (
-            "customer" in findings_012[0].additional_context.lower()
-            or "order" in findings_012[0].additional_context.lower()
+            "customer" in (findings_012[0].additional_context or "").lower()
+            or "order" in (findings_012[0].additional_context or "").lower()
         )
 
 
@@ -1799,8 +1808,8 @@ class TestFlatFileSiblings:
         )
         f017 = [f for f in result.findings if f.rule_id == "PY-CODE-017"]
         assert f017
-        assert "__init__.py" in f017[0].message
-        assert "sub-package" in f017[0].message
+        assert "__init__.py" in (f017[0].message or "")
+        assert "sub-package" in (f017[0].message or "")
         assert f017[0].metadata["prefix"] == "exec"
 
     def test_read_tool_skipped(self, tmp_project):
@@ -1833,9 +1842,10 @@ class TestFlatFileSiblings:
         )
         f017 = [f for f in result.findings if f.rule_id == "PY-CODE-017"]
         assert f017, "Expected PY-CODE-017 to fire from worktree cwd"
-        assert f017[0].metadata["directory"] == str(pkg)
-        assert str(worktree) in f017[0].metadata["directory"]
-        assert Path(f017[0].metadata["directory"]) != repo / "src" / "agents"
+        directory = output_string(f017[0].metadata, "directory")
+        assert directory == str(pkg)
+        assert str(worktree) in directory
+        assert Path(directory) != repo / "src" / "agents"
 
 
 # ===========================================================================

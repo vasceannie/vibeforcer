@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from pathlib import Path
 from time import monotonic
 
+from vibeforcer._types import ObjectDict
 from vibeforcer.adapters import get_adapter
 from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.config import is_path_skipped, is_repo_disabled
@@ -219,7 +221,7 @@ def render_output(
     ctx: HookContext,
     findings: list[RuleFinding],
     adapter: PlatformAdapter | None = None,
-) -> dict[str, object] | None:
+) -> ObjectDict | None:
     if not findings:
         return None
 
@@ -254,7 +256,7 @@ def _check_skip(ctx: HookContext, platform: str) -> EngineResult | None:
 
 
 def evaluate_payload(
-    payload_dict: dict[str, object],
+    payload_dict: Mapping[str, object],
     platform: str = "claude",
 ) -> EngineResult:
     adapter = get_adapter(platform)

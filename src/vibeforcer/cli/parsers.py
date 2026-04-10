@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 
+SubparsersAction = argparse._SubParsersAction[argparse.ArgumentParser]
+
 from vibeforcer.cli.commands import (
     VALID_PLATFORMS,
     _PLATFORM_HELP,
@@ -40,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_core_parsers(sub: argparse._SubParsersAction) -> None:
+def _add_core_parsers(sub: SubparsersAction) -> None:
     handle = sub.add_parser("handle", help="Read hook payload from stdin")
     handle.add_argument(
         "--platform", choices=VALID_PLATFORMS, default="claude", help=_PLATFORM_HELP
@@ -82,7 +84,7 @@ def _add_core_parsers(sub: argparse._SubParsersAction) -> None:
     test.set_defaults(func=cmd_test)
 
 
-def _add_config_parsers(sub: argparse._SubParsersAction) -> None:
+def _add_config_parsers(sub: SubparsersAction) -> None:
     config_parser = sub.add_parser("config", help="Configuration management")
     config_sub = config_parser.add_subparsers(dest="config_command")
 
@@ -97,7 +99,7 @@ def _add_config_parsers(sub: argparse._SubParsersAction) -> None:
     path.set_defaults(func=cmd_config_path)
 
 
-def _add_lint_parsers(sub: argparse._SubParsersAction) -> None:
+def _add_lint_parsers(sub: SubparsersAction) -> None:
     lint = sub.add_parser("lint", help="Batch code quality analysis")
     lint_sub = lint.add_subparsers(dest="lint_command")
 

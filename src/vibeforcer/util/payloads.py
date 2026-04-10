@@ -4,8 +4,9 @@ import fnmatch
 import re
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Iterable
 
+from vibeforcer._types import ObjectDict, ObjectMapping, object_dict, object_list
 from vibeforcer.constants import EDIT_TOOL_NAMES, LANGUAGE_BY_SUFFIX
 from vibeforcer.models import ContentTarget, RuntimeConfig
 
@@ -18,7 +19,9 @@ def lower_path(value: str) -> str:
     return normalize_path(value).lower()
 
 
-def first_present(mapping: dict[str, Any], keys: Iterable[str], *, strip: bool = True) -> str:
+def first_present(
+    mapping: ObjectMapping, keys: Iterable[str], *, strip: bool = True
+) -> str:
     for key in keys:
         value = mapping.get(key)
         if isinstance(value, str) and value.strip():
@@ -26,7 +29,7 @@ def first_present(mapping: dict[str, Any], keys: Iterable[str], *, strip: bool =
     return ""
 
 
-def extract_path_from_mapping(mapping: dict[str, Any]) -> str:
+def extract_path_from_mapping(mapping: ObjectMapping) -> str:
     return first_present(
         mapping,
         (
@@ -47,7 +50,7 @@ def extract_path_from_mapping(mapping: dict[str, Any]) -> str:
     )
 
 
-def extract_content_from_mapping(mapping: dict[str, Any]) -> str:
+def extract_content_from_mapping(mapping: ObjectMapping) -> str:
     return first_present(
         mapping,
         (
@@ -137,7 +140,7 @@ def any_path_matches(path_value: str, patterns: list[str]) -> bool:
 
 
 def shell_command_paths(command: str) -> list[str]:
-    pattern = re.compile(r'([~./A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+')
+    pattern = re.compile(r"([~./A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+")
     seen: list[str] = []
     for match in pattern.finditer(command):
         value = match.group(0)
@@ -147,8 +150,8 @@ def shell_command_paths(command: str) -> list[str]:
 
 
 class HookPayload:
-    def __init__(self, payload: dict[str, Any], config: RuntimeConfig) -> None:
-        self.payload = payload
+    def __init__(self, payload: ObjectMapping, config: RuntimeConfig) -> None:
+        self.payload = object_dict(payload)
         self.config = config
 
     @cached_property
@@ -166,9 +169,8 @@ class HookPayload:
         return ""
 
     @cached_property
-    def tool_input(self) -> dict[str, Any]:
-        value = self.payload.get("tool_input")
-        return value if isinstance(value, dict) else {}
+    def tool_input(self) -> ObjectDict:
+        return object_dict(self.payload.get("tool_input"))
 
     @cached_property
     def cwd(self) -> Path:
@@ -204,24 +206,35 @@ class HookPayload:
         path_value = extract_path_from_mapping(merged)
         content_value = extract_content_from_mapping(merged)
         if path_value and content_value:
-            targets.append(ContentTarget(path=path_value, content=content_value, source="tool_input"))
+            targets.append(
+                ContentTarget(
+                    path=path_value, content=content_value, source="tool_input"
+                )
+            )
 
-        raw_edits = self.tool_input.get("edits")
-        if isinstance(raw_edits, list):
-            for item in raw_edits:
-                if not isinstance(item, dict):
-                    continue
-                path_item = extract_path_from_mapping(item)
-                content_item = extract_content_from_mapping(item)
-                if path_item and content_item:
-                    targets.append(ContentTarget(path=path_item, content=content_item, source="multi_edit"))
+        for item in object_list(self.tool_input.get("edits")):
+            item_dict = object_dict(item)
+            if not item_dict:
+                continue
+            path_item = extract_path_from_mapping(item_dict)
+            content_item = extract_content_from_mapping(item_dict)
+            if path_item and content_item:
+                targets.append(
+                    ContentTarget(
+                        path=path_item, content=content_item, source="multi_edit"
+                    )
+                )
 
-        patch_blob = first_present(self.tool_input, ("patch", "patchText", "patch_text"))
+        patch_blob = first_present(
+            self.tool_input, ("patch", "patchText", "patch_text")
+        )
         if patch_blob:
             patch_paths = parse_patch_candidate_paths(patch_blob)
             patch_content = extract_added_patch_content(patch_blob) or patch_blob
             for path_item in patch_paths or ["patch.diff"]:
-                targets.append(ContentTarget(path=path_item, content=patch_content, source="patch"))
+                targets.append(
+                    ContentTarget(path=path_item, content=patch_content, source="patch")
+                )
 
         unique: list[ContentTarget] = []
         seen: set[tuple[str, str, str]] = set()
@@ -241,18 +254,20 @@ class HookPayload:
                 path_value = extract_path_from_mapping(source)
                 if path_value:
                     values.append(path_value)
-        raw_edits = self.tool_input.get("edits")
-        if isinstance(raw_edits, list):
-            for item in raw_edits:
-                if isinstance(item, dict):
-                    path_item = extract_path_from_mapping(item)
-                    if path_item:
-                        values.append(path_item)
-        patch_blob = first_present(self.tool_input, ("patch", "patchText", "patch_text"))
+        for item in object_list(self.tool_input.get("edits")):
+            item_dict = object_dict(item)
+            if not item_dict:
+                continue
+            path_item = extract_path_from_mapping(item_dict)
+            if path_item:
+                values.append(path_item)
+        patch_blob = first_present(
+            self.tool_input, ("patch", "patchText", "patch_text")
+        )
         if patch_blob:
             values.extend(parse_patch_candidate_paths(patch_blob))
-        tool_response = self.payload.get("tool_response")
-        if isinstance(tool_response, dict):
+        tool_response = object_dict(self.payload.get("tool_response"))
+        if tool_response:
             path_value = extract_path_from_mapping(tool_response)
             if path_value:
                 values.append(path_value)

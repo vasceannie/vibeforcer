@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing_extensions import override
 
+from vibeforcer._types import ObjectDict, ObjectMapping, object_dict, string_value
 from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.models import RuleFinding, Severity
 
@@ -11,7 +12,7 @@ CODEX_EVENTS = {"SessionStart", "PreToolUse", "PostToolUse", "UserPromptSubmit",
 
 
 class CodexAdapter(PlatformAdapter):
-    name = "codex"
+    name: str = "codex"
 
     def _apply_block_decision(
         self,
@@ -26,18 +27,20 @@ class CodexAdapter(PlatformAdapter):
             self.decision_findings(findings, decision)
         )
 
-    def normalize_payload(self, raw: dict[str, Any]) -> dict[str, Any]:
-        return raw
+    @override
+    def normalize_payload(self, raw: ObjectMapping) -> ObjectDict:
+        return object_dict(raw)
 
+    @override
     def render_output(
         self,
         event_name: str,
         findings: list[RuleFinding],
         *,
         context: str | None = None,
-        updated_input: dict[str, Any] | None = None,
+        updated_input: ObjectDict | None = None,
         decision: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> ObjectDict | None:
         if not findings:
             return None
         if event_name not in CODEX_EVENTS:
@@ -71,7 +74,7 @@ class CodexAdapter(PlatformAdapter):
                 if f.decision == "block" and f.severity >= Severity.CRITICAL
             ]
             if critical_blocks:
-                payload: dict[str, Any] = {
+                payload: ObjectDict = {
                     "continue": False,
                     "stopReason": self.join_messages(critical_blocks),
                 }
@@ -117,7 +120,7 @@ class CodexAdapter(PlatformAdapter):
             if context and not payload.get("decision"):
                 payload["systemMessage"] = context
             elif context:
-                existing = payload.get("reason", "")
+                existing = string_value(payload.get("reason"))
                 payload["reason"] = (
                     (existing + "\n\n" + context).strip() if existing else context
                 )

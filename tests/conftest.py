@@ -1,15 +1,18 @@
 """Shared fixtures for vibeforcer tests."""
+
 from __future__ import annotations
 
 import json
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import pytest
 
+from vibeforcer._types import ObjectDict, object_dict, string_value
 from vibeforcer.engine import evaluate_payload as _evaluate_payload
+from vibeforcer.models import EngineResult
 
 BUNDLE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,6 +23,7 @@ _RESOURCES = BUNDLE_ROOT / "src" / "vibeforcer" / "resources"
 # ---------------------------------------------------------------------------
 # Core fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _vibeforcer_env(tmp_path):
@@ -71,10 +75,12 @@ def bundle_root() -> Path:
 @pytest.fixture
 def load_fixture():
     """Return a callable that loads a fixture JSON by name."""
-    def _load(name: str) -> dict:
+
+    def _load(name: str) -> dict[str, object]:
         fixture_path = BUNDLE_ROOT / "fixtures" / name
         raw = fixture_path.read_text(encoding="utf-8")
         return json.loads(raw)
+
     return _load
 
 
@@ -137,29 +143,38 @@ def langgraph_project(tmp_path):
 # Payload builders
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def pretool_write():
     """Build a PreToolUse Write payload."""
-    def _build(file_path: str, content: str, cwd: str | None = None) -> dict:
+
+    def _build(
+        file_path: str, content: str, cwd: str | None = None
+    ) -> dict[str, object]:
         return {
-            "session_id": "t", "cwd": cwd or str(BUNDLE_ROOT),
+            "session_id": "t",
+            "cwd": cwd or str(BUNDLE_ROOT),
             "hook_event_name": "PreToolUse",
             "tool_name": "Write",
             "tool_input": {"file_path": file_path, "content": content},
         }
+
     return _build
 
 
 @pytest.fixture
 def pretool_bash():
     """Build a PreToolUse Bash payload."""
-    def _build(command: str, cwd: str | None = None) -> dict:
+
+    def _build(command: str, cwd: str | None = None) -> dict[str, object]:
         return {
-            "session_id": "t", "cwd": cwd or str(BUNDLE_ROOT),
+            "session_id": "t",
+            "cwd": cwd or str(BUNDLE_ROOT),
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
             "tool_input": {"command": command},
         }
+
     return _build
 
 
@@ -167,43 +182,75 @@ def pretool_bash():
 # Assertion helpers
 # ---------------------------------------------------------------------------
 
-def assert_denied_by(result, rule_id: str, msg_fragment: str = ""):
+
+def require_output(result: EngineResult) -> ObjectDict:
+    assert result.output is not None, "Expected structured output, got None"
+    return result.output
+
+
+def hook_output(result: EngineResult) -> ObjectDict:
+    return object_dict(require_output(result).get("hookSpecificOutput"))
+
+
+def nested_output(mapping: ObjectDict, key: str) -> ObjectDict:
+    return object_dict(mapping.get(key))
+
+
+def output_string(mapping: ObjectDict, key: str, default: str = "") -> str:
+    value = string_value(mapping.get(key))
+    return value if value is not None else default
+
+
+def required_string(mapping: ObjectDict, key: str) -> str:
+    value = string_value(mapping.get(key))
+    assert value is not None, (
+        f"Expected string at key '{key}', got: {mapping.get(key)!r}"
+    )
+    return value
+
+
+def assert_denied_by(
+    result: EngineResult, rule_id: str, msg_fragment: str = ""
+) -> None:
     """Assert output is deny and the specific rule_id appears in the reason."""
-    assert result.output is not None, f"Expected deny from {rule_id}, got None output"
-    spec = result.output.get("hookSpecificOutput", {})
-    decision = spec.get("permissionDecision")
+    spec = hook_output(result)
+    decision = output_string(spec, "permissionDecision") or None
     if decision is None:
-        inner = spec.get("decision", {})
-        decision = inner.get("behavior")
-        reason = inner.get("message", "")
+        inner = nested_output(spec, "decision")
+        decision = output_string(inner, "behavior") or None
+        reason = output_string(inner, "message")
     else:
-        reason = spec.get("permissionDecisionReason", "")
+        reason = output_string(spec, "permissionDecisionReason")
     assert decision == "deny", f"Expected deny, got {decision}. Output: {result.output}"
     assert rule_id in reason, f"Expected {rule_id} in reason, got: {reason}"
     if msg_fragment:
-        assert msg_fragment.lower() in reason.lower(), f"Expected '{msg_fragment}' in reason"
+        assert msg_fragment.lower() in reason.lower(), (
+            f"Expected '{msg_fragment}' in reason"
+        )
 
 
-def assert_blocked(result, rule_id: str = ""):
+def assert_blocked(result: EngineResult, rule_id: str = "") -> None:
     """Assert top-level decision='block' (Stop/ConfigChange)."""
-    assert result.output is not None, "Expected block output, got None"
-    assert result.output.get("decision") == "block", f"Expected block, got: {result.output}"
+    output = require_output(result)
+    assert output_string(output, "decision") == "block", (
+        f"Expected block, got: {result.output}"
+    )
     if rule_id:
-        reason = result.output.get("reason", "")
+        reason = output_string(output, "reason")
         assert rule_id in reason, f"Expected {rule_id} in reason, got: {reason}"
 
 
-def assert_not_denied(result):
+def assert_not_denied(result: EngineResult) -> None:
     """Assert the result either has no output or does not deny."""
     if result.output is None:
         return
-    spec = result.output.get("hookSpecificOutput", {})
-    decision = spec.get("permissionDecision")
+    spec = hook_output(result)
+    decision = output_string(spec, "permissionDecision") or None
     assert decision != "deny", (
-        f"Expected no deny but got: {spec.get('permissionDecisionReason', '')}"
+        f"Expected no deny but got: {output_string(spec, 'permissionDecisionReason')}"
     )
 
 
-def finding_ids(result) -> set[str]:
+def finding_ids(result: EngineResult) -> set[str]:
     """Get the set of rule IDs from findings."""
     return {f.rule_id for f in result.findings}

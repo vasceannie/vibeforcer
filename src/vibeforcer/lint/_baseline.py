@@ -3,13 +3,14 @@
 "No new debt" quality gates.  Compares against a frozen baseline of
 existing violations.  Any new violation fails immediately.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from vibeforcer.lint._config import get_config
@@ -76,7 +77,7 @@ def save_baseline(violations_by_rule: dict[str, list[Violation]]) -> None:
     bp = _baseline_path()
     data = {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "rules": {
             rule: sorted(v.stable_id for v in violations)
             for rule, violations in violations_by_rule.items()

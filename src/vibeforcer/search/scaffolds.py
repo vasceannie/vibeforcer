@@ -1,10 +1,13 @@
 """Skill and plugin scaffolding for search integration."""
+
 from __future__ import annotations
 
 import json
 import textwrap
+from collections.abc import MutableMapping
 from pathlib import Path
 
+from vibeforcer._types import object_dict, object_list
 from vibeforcer.search.config import (
     DEFAULT_CLAUDE_SKILLS_DIR,
     DEFAULT_OPENCODE_CONFIG,
@@ -25,18 +28,19 @@ def write_text_file(path: Path, content: str, force: bool) -> None:
 
 def append_unique_json_list(path: Path, key: str, value: str) -> None:
     """Append *value* to a JSON array at *key* in *path*."""
+    data: dict[str, object]
     if path.exists():
         try:
-            data = json.loads(path.read_text())
+            data = object_dict(json.loads(path.read_text()))
         except json.JSONDecodeError as exc:
             raise IsxError(f"could not parse {path} as JSON: {exc}") from exc
     else:
         data = {"$schema": "https://opencode.ai/config.json"}
+    if not isinstance(data, MutableMapping):
+        raise IsxError(f"expected {path} to contain a JSON object")
 
-    items = data.get(key)
-    if items is None:
-        items = []
-    if not isinstance(items, list):
+    items = object_list(data.get(key))
+    if data.get(key) is not None and not items:
         raise IsxError(f"expected {path}:{key} to be a JSON array")
     if value not in items:
         items.append(value)
@@ -350,7 +354,9 @@ def scaffold_skill(skill_name: str, skill_target: str, force: bool) -> list[Path
     return destinations
 
 
-def scaffold_opencode_plugin(plugin_path: Path, opencode_config: Path, force: bool) -> Path:
+def scaffold_opencode_plugin(
+    plugin_path: Path, opencode_config: Path, force: bool
+) -> Path:
     """Write the OpenCode plugin and register it in opencode.json."""
     write_text_file(plugin_path, render_opencode_plugin(), force=force)
     append_unique_json_list(opencode_config, "plugin", str(plugin_path))

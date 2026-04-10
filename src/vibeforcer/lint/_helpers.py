@@ -6,6 +6,7 @@ import ast
 import fnmatch
 import os
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -305,7 +306,7 @@ def enclosing_function(
 
 
 def ensure_parsed(
-    files: list[object] | None,
+    files: Sequence[Path | ParsedFile] | None,
     fallback: list[Path] | None = None,
 ) -> list[ParsedFile]:
     """Accept raw ``Path`` list, ``ParsedFile`` list, or ``None``.

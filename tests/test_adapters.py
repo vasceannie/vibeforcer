@@ -9,6 +9,7 @@ Tests cover:
   6. Edge cases: mixed decisions, empty messages, mutation safety, combined
      context+decision, fixture replay through full engine pipeline
 """
+
 from __future__ import annotations
 
 import json
@@ -16,6 +17,9 @@ from pathlib import Path
 
 import pytest
 
+from tests import conftest as test_support
+
+from vibeforcer._types import ObjectDict, object_dict, string_value
 from vibeforcer.adapters import get_adapter, ADAPTERS
 from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.adapters.claude import ClaudeAdapter
@@ -23,14 +27,37 @@ from vibeforcer.adapters.codex import CodexAdapter
 from vibeforcer.adapters.opencode import OpenCodeAdapter
 from vibeforcer.engine import evaluate_payload
 from vibeforcer.models import RuleFinding, Severity
-from conftest import BUNDLE_ROOT
 
-FIXTURES_DIR = BUNDLE_ROOT / "fixtures"
+FIXTURES_DIR = test_support.BUNDLE_ROOT / "fixtures"
+
+
+def require_rendered(output: ObjectDict | None) -> ObjectDict:
+    assert output is not None, "Expected rendered adapter output, got None"
+    return output
+
+
+def require_spec(output: ObjectDict | None) -> ObjectDict:
+    rendered = require_rendered(output)
+    spec = object_dict(rendered.get("hookSpecificOutput"))
+    assert spec, f"Expected hookSpecificOutput, got: {rendered}"
+    return spec
+
+
+def require_nested(mapping: ObjectDict, key: str) -> ObjectDict:
+    nested = object_dict(mapping.get(key))
+    assert nested, f"Expected nested mapping at {key!r}, got: {mapping}"
+    return nested
+
+
+def rendered_string(mapping: ObjectDict, key: str, default: str = "") -> str:
+    value = string_value(mapping.get(key))
+    return value if value is not None else default
 
 
 # ===========================================================================
 # Adapter registry
 # ===========================================================================
+
 
 class TestAdapterRegistry:
     def test_all_platforms_registered(self):
@@ -52,6 +79,7 @@ class TestAdapterRegistry:
 # Claude adapter — backward compatibility
 # ===========================================================================
 
+
 class TestClaudeAdapter:
     """Ensure Claude adapter produces identical output to old render_output."""
 
@@ -72,114 +100,154 @@ class TestClaudeAdapter:
             )
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="deny", context=None, updated_input={},
+            "PreToolUse",
+            findings,
+            decision="deny",
+            context=None,
+            updated_input={},
         )
-        assert output is not None
-        spec = output["hookSpecificOutput"]
+        spec = require_spec(output)
         assert spec["permissionDecision"] == "deny"
-        assert "GIT-001" in spec["permissionDecisionReason"]
+        assert "GIT-001" in test_support.required_string(
+            spec, "permissionDecisionReason"
+        )
 
     def test_permission_request_deny(self):
         adapter = ClaudeAdapter()
         findings = [
             RuleFinding(
-                rule_id="TEST-001", title="t", severity=Severity.HIGH,
-                decision="deny", message="blocked",
+                rule_id="TEST-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="deny",
+                message="blocked",
             )
         ]
         output = adapter.render_output(
-            "PermissionRequest", findings,
-            decision="deny", context=None, updated_input={},
+            "PermissionRequest",
+            findings,
+            decision="deny",
+            context=None,
+            updated_input={},
         )
-        assert output is not None
-        inner = output["hookSpecificOutput"]["decision"]
+        inner = require_nested(require_spec(output), "decision")
         assert inner["behavior"] == "deny"
-        assert "TEST-001" in inner["message"]
+        assert "TEST-001" in test_support.required_string(inner, "message")
 
     def test_stop_block(self):
         adapter = ClaudeAdapter()
         findings = [
             RuleFinding(
-                rule_id="STOP-001", title="t", severity=Severity.HIGH,
-                decision="block", message="check issues",
+                rule_id="STOP-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="check issues",
             )
         ]
         output = adapter.render_output(
-            "Stop", findings,
-            decision="block", context=None, updated_input={},
+            "Stop",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
-        assert output is not None
-        assert output["decision"] == "block"
-        assert "STOP-001" in output["reason"]
+        rendered = require_rendered(output)
+        assert rendered["decision"] == "block"
+        assert "STOP-001" in test_support.required_string(rendered, "reason")
 
     def test_session_start_context(self):
         adapter = ClaudeAdapter()
         findings = [
             RuleFinding(
-                rule_id="CTX-001", title="t", severity=Severity.LOW,
+                rule_id="CTX-001",
+                title="t",
+                severity=Severity.LOW,
                 additional_context="load conventions",
             )
         ]
         output = adapter.render_output(
-            "SessionStart", findings,
-            decision=None, context="load conventions", updated_input={},
+            "SessionStart",
+            findings,
+            decision=None,
+            context="load conventions",
+            updated_input={},
         )
-        assert output is not None
-        assert output["hookSpecificOutput"]["additionalContext"] == "load conventions"
+        assert (
+            test_support.required_string(require_spec(output), "additionalContext")
+            == "load conventions"
+        )
 
     def test_task_completed_block(self):
         adapter = ClaudeAdapter()
         findings = [
             RuleFinding(
-                rule_id="TC-001", title="t", severity=Severity.HIGH,
-                decision="block", message="not done",
+                rule_id="TC-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="not done",
             )
         ]
         output = adapter.render_output(
-            "TaskCompleted", findings,
-            decision="block", context=None, updated_input={},
+            "TaskCompleted",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
-        assert output is not None
-        assert output["continue"] is False
-        assert "TC-001" in output["stopReason"]
+        rendered = require_rendered(output)
+        assert rendered["continue"] is False
+        assert "TC-001" in test_support.required_string(rendered, "stopReason")
 
     def test_pretool_block_maps_to_deny(self):
         """Engine uses 'block' internally; Claude Code expects 'deny' for PreToolUse."""
         adapter = ClaudeAdapter()
         findings = [
             RuleFinding(
-                rule_id="SYS-001", title="t", severity=Severity.HIGH,
-                decision="block", message="system path blocked",
+                rule_id="SYS-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="system path blocked",
             )
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="block", context=None, updated_input={},
+            "PreToolUse",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
-        assert output is not None
-        spec = output["hookSpecificOutput"]
+        spec = require_spec(output)
         # "block" → "deny" in Claude Code output
         assert spec["permissionDecision"] == "deny"
-        assert "SYS-001" in spec["permissionDecisionReason"]
+        assert "SYS-001" in test_support.required_string(
+            spec, "permissionDecisionReason"
+        )
 
     def test_pretool_deny_with_context_and_updated_input(self):
         """All three fields (decision, context, updatedInput) in one output."""
         adapter = ClaudeAdapter()
         findings = [
             RuleFinding(
-                rule_id="X-001", title="t", severity=Severity.HIGH,
-                decision="deny", message="nope",
+                rule_id="X-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="deny",
+                message="nope",
                 additional_context="policy says no",
                 updated_input={"command": "echo safe"},
             )
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="deny", context="policy says no",
+            "PreToolUse",
+            findings,
+            decision="deny",
+            context="policy says no",
             updated_input={"command": "echo safe"},
         )
-        spec = output["hookSpecificOutput"]
+        spec = require_spec(output)
         assert spec["permissionDecision"] == "deny"
         assert spec["additionalContext"] == "policy says no"
         assert spec["updatedInput"] == {"command": "echo safe"}
@@ -188,15 +256,21 @@ class TestClaudeAdapter:
         adapter = ClaudeAdapter()
         findings = [
             RuleFinding(
-                rule_id="MOD-001", title="t", severity=Severity.LOW,
-                decision="allow", updated_input={"command": "echo safe"},
+                rule_id="MOD-001",
+                title="t",
+                severity=Severity.LOW,
+                decision="allow",
+                updated_input={"command": "echo safe"},
             )
         ]
         output = adapter.render_output(
-            "PermissionRequest", findings,
-            decision="allow", context=None, updated_input={"command": "echo safe"},
+            "PermissionRequest",
+            findings,
+            decision="allow",
+            context=None,
+            updated_input={"command": "echo safe"},
         )
-        inner = output["hookSpecificOutput"]["decision"]
+        inner = require_nested(require_spec(output), "decision")
         assert inner["behavior"] == "allow"
         assert inner["updatedInput"] == {"command": "echo safe"}
         assert "message" not in inner  # message is for deny only
@@ -205,23 +279,40 @@ class TestClaudeAdapter:
         """PermissionRequest only handles deny and allow; anything else → None."""
         adapter = ClaudeAdapter()
         findings = [
-            RuleFinding(rule_id="X", title="t", severity=Severity.HIGH,
-                        decision="block", message="m")
+            RuleFinding(
+                rule_id="X",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="m",
+            )
         ]
-        assert adapter.render_output(
-            "PermissionRequest", findings,
-            decision="block", context=None, updated_input={},
-        ) is None
+        assert (
+            adapter.render_output(
+                "PermissionRequest",
+                findings,
+                decision="block",
+                context=None,
+                updated_input={},
+            )
+            is None
+        )
 
     def test_posttool_use_failure_advisory(self):
         adapter = ClaudeAdapter()
         findings = [
-            RuleFinding(rule_id="F-001", title="t", severity=Severity.MEDIUM,
-                        additional_context="the tool failed, try another approach")
+            RuleFinding(
+                rule_id="F-001",
+                title="t",
+                severity=Severity.MEDIUM,
+                additional_context="the tool failed, try another approach",
+            )
         ]
         output = adapter.render_output(
-            "PostToolUseFailure", findings,
-            decision=None, context="the tool failed, try another approach",
+            "PostToolUseFailure",
+            findings,
+            decision=None,
+            context="the tool failed, try another approach",
             updated_input={},
         )
         assert output == {"systemMessage": "the tool failed, try another approach"}
@@ -229,25 +320,43 @@ class TestClaudeAdapter:
     def test_posttool_use_failure_no_context_returns_none(self):
         adapter = ClaudeAdapter()
         findings = [
-            RuleFinding(rule_id="F-002", title="t", severity=Severity.HIGH,
-                        decision="block", message="m")
+            RuleFinding(
+                rule_id="F-002",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="m",
+            )
         ]
         # PostToolUseFailure ignores decision; only context produces output
-        assert adapter.render_output(
-            "PostToolUseFailure", findings,
-            decision="block", context=None, updated_input={},
-        ) is None
+        assert (
+            adapter.render_output(
+                "PostToolUseFailure",
+                findings,
+                decision="block",
+                context=None,
+                updated_input={},
+            )
+            is None
+        )
 
     def test_stop_context_only_no_decision(self):
         """Stop with context but no blocking decision → systemMessage."""
         adapter = ClaudeAdapter()
         findings = [
-            RuleFinding(rule_id="CTX-002", title="t", severity=Severity.LOW,
-                        additional_context="don't forget to commit")
+            RuleFinding(
+                rule_id="CTX-002",
+                title="t",
+                severity=Severity.LOW,
+                additional_context="don't forget to commit",
+            )
         ]
         output = adapter.render_output(
-            "Stop", findings,
-            decision=None, context="don't forget to commit", updated_input={},
+            "Stop",
+            findings,
+            decision=None,
+            context="don't forget to commit",
+            updated_input={},
         )
         assert output == {"systemMessage": "don't forget to commit"}
 
@@ -255,27 +364,44 @@ class TestClaudeAdapter:
         """When Stop has both block + context, context appends to reason."""
         adapter = ClaudeAdapter()
         findings = [
-            RuleFinding(rule_id="STOP-001", title="t", severity=Severity.HIGH,
-                        decision="block", message="unfinished tests",
-                        additional_context="also check lint")
+            RuleFinding(
+                rule_id="STOP-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="unfinished tests",
+                additional_context="also check lint",
+            )
         ]
         output = adapter.render_output(
-            "Stop", findings,
-            decision="block", context="also check lint", updated_input={},
+            "Stop",
+            findings,
+            decision="block",
+            context="also check lint",
+            updated_input={},
         )
-        assert output["decision"] == "block"
-        assert "STOP-001" in output["reason"]
-        assert "also check lint" in output["reason"]
+        rendered = require_rendered(output)
+        assert rendered["decision"] == "block"
+        reason = test_support.required_string(rendered, "reason")
+        assert "STOP-001" in reason
+        assert "also check lint" in reason
 
     def test_teammate_idle_context_only(self):
         adapter = ClaudeAdapter()
         findings = [
-            RuleFinding(rule_id="CTX", title="t", severity=Severity.LOW,
-                        additional_context="work available in queue")
+            RuleFinding(
+                rule_id="CTX",
+                title="t",
+                severity=Severity.LOW,
+                additional_context="work available in queue",
+            )
         ]
         output = adapter.render_output(
-            "TeammateIdle", findings,
-            decision=None, context="work available in queue", updated_input={},
+            "TeammateIdle",
+            findings,
+            decision=None,
+            context="work available in queue",
+            updated_input={},
         )
         assert output == {"systemMessage": "work available in queue"}
 
@@ -283,29 +409,57 @@ class TestClaudeAdapter:
         """Events not handled by any branch fall through to None."""
         adapter = ClaudeAdapter()
         findings = [
-            RuleFinding(rule_id="X", title="t", severity=Severity.HIGH,
-                        decision="block", message="m")
+            RuleFinding(
+                rule_id="X",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="m",
+            )
         ]
-        assert adapter.render_output(
-            "CompletelyFakeEvent", findings,
-            decision="block", context=None, updated_input={},
-        ) is None
+        assert (
+            adapter.render_output(
+                "CompletelyFakeEvent",
+                findings,
+                decision="block",
+                context=None,
+                updated_input={},
+            )
+            is None
+        )
 
     def test_empty_findings_returns_none_for_all_events(self):
         """No findings → None for every event type."""
         adapter = ClaudeAdapter()
-        for event in ["PreToolUse", "PermissionRequest", "PostToolUse",
-                       "Stop", "SessionStart", "UserPromptSubmit",
-                       "TaskCompleted", "TeammateIdle", "PostToolUseFailure",
-                       "ConfigChange", "SubagentStop"]:
-            assert adapter.render_output(
-                event, [], decision=None, context=None, updated_input={},
-            ) is None
+        for event in [
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "Stop",
+            "SessionStart",
+            "UserPromptSubmit",
+            "TaskCompleted",
+            "TeammateIdle",
+            "PostToolUseFailure",
+            "ConfigChange",
+            "SubagentStop",
+        ]:
+            assert (
+                adapter.render_output(
+                    event,
+                    [],
+                    decision=None,
+                    context=None,
+                    updated_input={},
+                )
+                is None
+            )
 
 
 # ===========================================================================
 # Codex adapter
 # ===========================================================================
+
 
 class TestCodexAdapter:
     def test_normalize_is_passthrough(self):
@@ -326,78 +480,108 @@ class TestCodexAdapter:
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="GIT-001", title="No --no-verify",
-                severity=Severity.HIGH, decision="deny",
+                rule_id="GIT-001",
+                title="No --no-verify",
+                severity=Severity.HIGH,
+                decision="deny",
                 message="hook bypass detected",
             )
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="deny", context=None, updated_input={},
+            "PreToolUse",
+            findings,
+            decision="deny",
+            context=None,
+            updated_input={},
         )
-        assert output is not None
-        spec = output["hookSpecificOutput"]
+        spec = require_spec(output)
         assert spec["hookEventName"] == "PreToolUse"
         assert spec["permissionDecision"] == "deny"
-        assert "GIT-001" in spec["permissionDecisionReason"]
+        assert "GIT-001" in test_support.required_string(
+            spec, "permissionDecisionReason"
+        )
 
     def test_pretool_block_maps_to_deny(self):
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="SYS-001", title="t", severity=Severity.HIGH,
-                decision="block", message="system path",
+                rule_id="SYS-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="system path",
             )
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="block", context=None, updated_input={},
+            "PreToolUse",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
-        spec = output["hookSpecificOutput"]
+        spec = require_spec(output)
         assert spec["permissionDecision"] == "deny"
 
     def test_stop_block(self):
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="STOP-001", title="t", severity=Severity.HIGH,
-                decision="block", message="review issues",
+                rule_id="STOP-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="review issues",
             )
         ]
         output = adapter.render_output(
-            "Stop", findings,
-            decision="block", context=None, updated_input={},
+            "Stop",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
-        assert output is not None
-        assert output["decision"] == "block"
-        assert "STOP-001" in output["reason"]
+        rendered = require_rendered(output)
+        assert rendered["decision"] == "block"
+        assert "STOP-001" in test_support.required_string(rendered, "reason")
 
     def test_session_start_context(self):
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="CTX-001", title="t", severity=Severity.LOW,
+                rule_id="CTX-001",
+                title="t",
+                severity=Severity.LOW,
                 additional_context="workspace conventions",
             )
         ]
         output = adapter.render_output(
-            "SessionStart", findings,
-            decision=None, context="workspace conventions", updated_input={},
+            "SessionStart",
+            findings,
+            decision=None,
+            context="workspace conventions",
+            updated_input={},
         )
-        assert output is not None
-        assert "workspace conventions" in output["hookSpecificOutput"]["additionalContext"]
+        assert "workspace conventions" in test_support.required_string(
+            require_spec(output), "additionalContext"
+        )
 
     def test_user_prompt_submit_block(self):
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="PROMPT-001", title="t", severity=Severity.HIGH,
-                decision="block", message="api key detected",
+                rule_id="PROMPT-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="api key detected",
             )
         ]
         output = adapter.render_output(
-            "UserPromptSubmit", findings,
-            decision="block", context=None, updated_input={},
+            "UserPromptSubmit",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
         assert output is not None
         assert output["decision"] == "block"
@@ -406,44 +590,62 @@ class TestCodexAdapter:
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="Q-001", title="t", severity=Severity.MEDIUM,
+                rule_id="Q-001",
+                title="t",
+                severity=Severity.MEDIUM,
                 additional_context="files were updated",
             )
         ]
         output = adapter.render_output(
-            "PostToolUse", findings,
-            decision=None, context="files were updated", updated_input={},
+            "PostToolUse",
+            findings,
+            decision=None,
+            context="files were updated",
+            updated_input={},
         )
-        assert output is not None
-        assert "files were updated" in output["hookSpecificOutput"]["additionalContext"]
+        assert "files were updated" in test_support.required_string(
+            require_spec(output), "additionalContext"
+        )
 
     def test_unsupported_event_returns_none(self):
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="X-001", title="t", severity=Severity.HIGH,
-                decision="deny", message="blocked",
+                rule_id="X-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="deny",
+                message="blocked",
             )
         ]
         # PermissionRequest doesn't exist in Codex
         output = adapter.render_output(
-            "PermissionRequest", findings,
-            decision="deny", context=None, updated_input={},
+            "PermissionRequest",
+            findings,
+            decision="deny",
+            context=None,
+            updated_input={},
         )
         assert output is None
 
         # SubagentStop doesn't exist in Codex
         output = adapter.render_output(
-            "SubagentStop", findings,
-            decision="block", context=None, updated_input={},
+            "SubagentStop",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
         assert output is None
 
     def test_no_findings_returns_none(self):
         adapter = CodexAdapter()
         output = adapter.render_output(
-            "PreToolUse", [],
-            decision=None, context=None, updated_input={},
+            "PreToolUse",
+            [],
+            decision=None,
+            context=None,
+            updated_input={},
         )
         assert output is None
 
@@ -453,32 +655,43 @@ class TestCodexAdapter:
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="CRIT-001", title="critical", severity=Severity.CRITICAL,
-                decision="block", message="critical safety violation",
+                rule_id="CRIT-001",
+                title="critical",
+                severity=Severity.CRITICAL,
+                decision="block",
+                message="critical safety violation",
             )
         ]
         output = adapter.render_output(
-            "PostToolUse", findings,
-            decision="block", context=None, updated_input={},
+            "PostToolUse",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
-        assert output is not None
-        assert output["continue"] is False
-        assert "CRIT-001" in output["stopReason"]
-        # Must NOT include decision:"block" alongside continue:false
-        assert "decision" not in output
+        rendered = require_rendered(output)
+        assert rendered["continue"] is False
+        assert "CRIT-001" in test_support.required_string(rendered, "stopReason")
+        assert "decision" not in rendered
 
     def test_posttool_high_block_does_not_stop_session(self):
         """HIGH severity block on PostToolUse should NOT emit continue:false."""
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="HIGH-001", title="high", severity=Severity.HIGH,
-                decision="block", message="non-critical issue",
+                rule_id="HIGH-001",
+                title="high",
+                severity=Severity.HIGH,
+                decision="block",
+                message="non-critical issue",
             )
         ]
         output = adapter.render_output(
-            "PostToolUse", findings,
-            decision="block", context=None, updated_input={},
+            "PostToolUse",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
         assert output is not None
         assert output["decision"] == "block"
@@ -489,49 +702,81 @@ class TestCodexAdapter:
         adapter = CodexAdapter()
         findings = [
             RuleFinding(
-                rule_id="CRIT-002", title="t", severity=Severity.CRITICAL,
-                decision="block", message="critical",
+                rule_id="CRIT-002",
+                title="t",
+                severity=Severity.CRITICAL,
+                decision="block",
+                message="critical",
                 additional_context="also check this",
             )
         ]
         output = adapter.render_output(
-            "PostToolUse", findings,
-            decision="block", context="also check this", updated_input={},
+            "PostToolUse",
+            findings,
+            decision="block",
+            context="also check this",
+            updated_input={},
         )
-        assert output["continue"] is False
-        assert "decision" not in output  # no conflicting decision
-        assert output["hookSpecificOutput"]["additionalContext"] == "also check this"
+        rendered = require_rendered(output)
+        assert rendered["continue"] is False
+        assert "decision" not in rendered
+        assert (
+            test_support.required_string(require_spec(output), "additionalContext")
+            == "also check this"
+        )
 
     def test_posttool_mixed_critical_and_high(self):
         """Mixed CRITICAL + HIGH: CRITICAL wins → continue:false, no decision."""
         adapter = CodexAdapter()
         findings = [
-            RuleFinding(rule_id="HIGH-001", title="t", severity=Severity.HIGH,
-                        decision="block", message="high issue"),
-            RuleFinding(rule_id="CRIT-001", title="t", severity=Severity.CRITICAL,
-                        decision="block", message="critical issue"),
+            RuleFinding(
+                rule_id="HIGH-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="high issue",
+            ),
+            RuleFinding(
+                rule_id="CRIT-001",
+                title="t",
+                severity=Severity.CRITICAL,
+                decision="block",
+                message="critical issue",
+            ),
         ]
         output = adapter.render_output(
-            "PostToolUse", findings,
-            decision="block", context=None, updated_input={},
+            "PostToolUse",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
-        assert output["continue"] is False
-        assert "CRIT-001" in output["stopReason"]
-        assert "decision" not in output
+        rendered = require_rendered(output)
+        assert rendered["continue"] is False
+        assert "CRIT-001" in test_support.required_string(rendered, "stopReason")
+        assert "decision" not in rendered
 
     def test_pretool_deny_with_context(self):
         """PreToolUse deny + context both present in output."""
         adapter = CodexAdapter()
         findings = [
-            RuleFinding(rule_id="R-001", title="t", severity=Severity.HIGH,
-                        decision="deny", message="nope",
-                        additional_context="try something else"),
+            RuleFinding(
+                rule_id="R-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="deny",
+                message="nope",
+                additional_context="try something else",
+            ),
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="deny", context="try something else", updated_input={},
+            "PreToolUse",
+            findings,
+            decision="deny",
+            context="try something else",
+            updated_input={},
         )
-        spec = output["hookSpecificOutput"]
+        spec = require_spec(output)
         assert spec["permissionDecision"] == "deny"
         assert spec["additionalContext"] == "try something else"
 
@@ -539,14 +784,21 @@ class TestCodexAdapter:
         """PreToolUse with only context (no deny/block) → additionalContext."""
         adapter = CodexAdapter()
         findings = [
-            RuleFinding(rule_id="CTX-001", title="t", severity=Severity.LOW,
-                        additional_context="check search results"),
+            RuleFinding(
+                rule_id="CTX-001",
+                title="t",
+                severity=Severity.LOW,
+                additional_context="check search results",
+            ),
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision=None, context="check search results", updated_input={},
+            "PreToolUse",
+            findings,
+            decision=None,
+            context="check search results",
+            updated_input={},
         )
-        spec = output["hookSpecificOutput"]
+        spec = require_spec(output)
         # No permissionDecision, only context
         assert "permissionDecision" not in spec
         assert spec["additionalContext"] == "check search results"
@@ -555,53 +807,105 @@ class TestCodexAdapter:
         """Stop block + context → context merged into reason."""
         adapter = CodexAdapter()
         findings = [
-            RuleFinding(rule_id="STOP-001", title="t", severity=Severity.HIGH,
-                        decision="block", message="unfinished",
-                        additional_context="run tests"),
+            RuleFinding(
+                rule_id="STOP-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="unfinished",
+                additional_context="run tests",
+            ),
         ]
         output = adapter.render_output(
-            "Stop", findings,
-            decision="block", context="run tests", updated_input={},
+            "Stop",
+            findings,
+            decision="block",
+            context="run tests",
+            updated_input={},
         )
-        assert output["decision"] == "block"
-        assert "STOP-001" in output["reason"]
-        assert "run tests" in output["reason"]
+        rendered = require_rendered(output)
+        assert rendered["decision"] == "block"
+        reason = test_support.required_string(rendered, "reason")
+        assert "STOP-001" in reason
+        assert "run tests" in reason
 
     def test_user_prompt_block_with_context(self):
         """UserPromptSubmit block + context → both in output."""
         adapter = CodexAdapter()
         findings = [
-            RuleFinding(rule_id="P-001", title="t", severity=Severity.HIGH,
-                        decision="block", message="api key",
-                        additional_context="redact first"),
+            RuleFinding(
+                rule_id="P-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="api key",
+                additional_context="redact first",
+            ),
         ]
         output = adapter.render_output(
-            "UserPromptSubmit", findings,
-            decision="block", context="redact first", updated_input={},
+            "UserPromptSubmit",
+            findings,
+            decision="block",
+            context="redact first",
+            updated_input={},
         )
-        assert output["decision"] == "block"
-        assert output["hookSpecificOutput"]["additionalContext"] == "redact first"
+        rendered = require_rendered(output)
+        assert rendered["decision"] == "block"
+        assert (
+            test_support.required_string(require_spec(output), "additionalContext")
+            == "redact first"
+        )
 
     def test_all_unsupported_codex_events(self):
         """Every Claude Code event not in CODEX_EVENTS → None."""
         adapter = CodexAdapter()
-        dummy = [RuleFinding(rule_id="X", title="t", severity=Severity.HIGH,
-                             decision="block", message="m")]
-        for event in ["PermissionRequest", "SubagentStop", "PostToolUseFailure",
-                       "TaskCompleted", "TeammateIdle", "ConfigChange",
-                       "Notification", "SubagentStart", "InstructionsLoaded",
-                       "WorktreeCreate", "WorktreeRemove", "PreCompact",
-                       "PostCompact", "Elicitation", "ElicitationResult",
-                       "SessionEnd", "StopFailure", "CwdChanged",
-                       "FileChanged", "TaskCreated"]:
-            assert adapter.render_output(
-                event, dummy, decision="block", context=None, updated_input={},
-            ) is None, f"{event} should return None on Codex"
+        dummy = [
+            RuleFinding(
+                rule_id="X",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="m",
+            )
+        ]
+        for event in [
+            "PermissionRequest",
+            "SubagentStop",
+            "PostToolUseFailure",
+            "TaskCompleted",
+            "TeammateIdle",
+            "ConfigChange",
+            "Notification",
+            "SubagentStart",
+            "InstructionsLoaded",
+            "WorktreeCreate",
+            "WorktreeRemove",
+            "PreCompact",
+            "PostCompact",
+            "Elicitation",
+            "ElicitationResult",
+            "SessionEnd",
+            "StopFailure",
+            "CwdChanged",
+            "FileChanged",
+            "TaskCreated",
+        ]:
+            assert (
+                adapter.render_output(
+                    event,
+                    dummy,
+                    decision="block",
+                    context=None,
+                    updated_input={},
+                )
+                is None
+            ), f"{event} should return None on Codex"
 
 
 # ===========================================================================
 # OpenCode adapter
 # ===========================================================================
+
 
 class TestOpenCodeAdapter:
     def test_normalize_maps_event_name(self):
@@ -647,29 +951,41 @@ class TestOpenCodeAdapter:
         adapter = OpenCodeAdapter()
         findings = [
             RuleFinding(
-                rule_id="GIT-001", title="t", severity=Severity.HIGH,
-                decision="deny", message="hook bypass detected",
+                rule_id="GIT-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="deny",
+                message="hook bypass detected",
             )
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="deny", context=None, updated_input={},
+            "PreToolUse",
+            findings,
+            decision="deny",
+            context=None,
+            updated_input={},
         )
         assert output is not None
         assert output["action"] == "block"
-        assert "GIT-001" in output["reason"]
+        assert "GIT-001" in test_support.required_string(output, "reason")
 
     def test_pretool_allow_with_updated_args(self):
         adapter = OpenCodeAdapter()
         findings = [
             RuleFinding(
-                rule_id="MOD-001", title="t", severity=Severity.LOW,
-                decision="allow", updated_input={"command": "echo safe"},
+                rule_id="MOD-001",
+                title="t",
+                severity=Severity.LOW,
+                decision="allow",
+                updated_input={"command": "echo safe"},
             )
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="allow", context=None, updated_input={"command": "echo safe"},
+            "PreToolUse",
+            findings,
+            decision="allow",
+            context=None,
+            updated_input={"command": "echo safe"},
         )
         assert output is not None
         assert output["action"] == "allow"
@@ -679,13 +995,18 @@ class TestOpenCodeAdapter:
         adapter = OpenCodeAdapter()
         findings = [
             RuleFinding(
-                rule_id="INFO-001", title="t", severity=Severity.LOW,
+                rule_id="INFO-001",
+                title="t",
+                severity=Severity.LOW,
                 additional_context="remember to test",
             )
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision=None, context="remember to test", updated_input={},
+            "PreToolUse",
+            findings,
+            decision=None,
+            context="remember to test",
+            updated_input={},
         )
         assert output is not None
         assert output["action"] == "context"
@@ -695,45 +1016,62 @@ class TestOpenCodeAdapter:
         adapter = OpenCodeAdapter()
         findings = [
             RuleFinding(
-                rule_id="Q-001", title="t", severity=Severity.MEDIUM,
-                decision="block", message="quality issue",
+                rule_id="Q-001",
+                title="t",
+                severity=Severity.MEDIUM,
+                decision="block",
+                message="quality issue",
             )
         ]
         output = adapter.render_output(
-            "PostToolUse", findings,
-            decision="block", context=None, updated_input={},
+            "PostToolUse",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
         assert output is not None
         assert output["action"] == "warn"
-        assert "Q-001" in output["reason"]
+        assert "Q-001" in test_support.required_string(output, "reason")
 
     def test_stop_continue(self):
         adapter = OpenCodeAdapter()
         findings = [
             RuleFinding(
-                rule_id="STOP-001", title="t", severity=Severity.HIGH,
-                decision="block", message="run tests",
+                rule_id="STOP-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="run tests",
             )
         ]
         output = adapter.render_output(
-            "Stop", findings,
-            decision="block", context=None, updated_input={},
+            "Stop",
+            findings,
+            decision="block",
+            context=None,
+            updated_input={},
         )
         assert output is not None
         assert output["action"] == "continue"
-        assert "STOP-001" in output["reason"]
+        assert "STOP-001" in test_support.required_string(output, "reason")
 
     def test_session_start_context(self):
         adapter = OpenCodeAdapter()
         findings = [
             RuleFinding(
-                rule_id="CTX-001", title="t", severity=Severity.LOW,
+                rule_id="CTX-001",
+                title="t",
+                severity=Severity.LOW,
                 additional_context="load conventions",
             )
         ]
         output = adapter.render_output(
-            "SessionStart", findings,
-            decision=None, context="load conventions", updated_input={},
+            "SessionStart",
+            findings,
+            decision=None,
+            context="load conventions",
+            updated_input={},
         )
         assert output is not None
         assert output["action"] == "context"
@@ -742,13 +1080,19 @@ class TestOpenCodeAdapter:
         adapter = OpenCodeAdapter()
         findings = [
             RuleFinding(
-                rule_id="PERM-001", title="t", severity=Severity.HIGH,
-                decision="deny", message="not allowed",
+                rule_id="PERM-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="deny",
+                message="not allowed",
             )
         ]
         output = adapter.render_output(
-            "PermissionRequest", findings,
-            decision="deny", context=None, updated_input={},
+            "PermissionRequest",
+            findings,
+            decision="deny",
+            context=None,
+            updated_input={},
         )
         assert output is not None
         assert output["action"] == "block"
@@ -756,8 +1100,11 @@ class TestOpenCodeAdapter:
     def test_no_findings_returns_none(self):
         adapter = OpenCodeAdapter()
         output = adapter.render_output(
-            "PreToolUse", [],
-            decision=None, context=None, updated_input={},
+            "PreToolUse",
+            [],
+            decision=None,
+            context=None,
+            updated_input={},
         )
         assert output is None
 
@@ -766,13 +1113,19 @@ class TestOpenCodeAdapter:
         adapter = OpenCodeAdapter()
         findings = [
             RuleFinding(
-                rule_id="ASK-001", title="t", severity=Severity.MEDIUM,
-                decision="ask", message="confirm this",
+                rule_id="ASK-001",
+                title="t",
+                severity=Severity.MEDIUM,
+                decision="ask",
+                message="confirm this",
             )
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="ask", context=None, updated_input={},
+            "PreToolUse",
+            findings,
+            decision="ask",
+            context=None,
+            updated_input={},
         )
         assert output is not None
         assert output["action"] == "block"
@@ -914,44 +1267,69 @@ class TestOpenCodeAdapter:
         """Deny output includes context when provided."""
         adapter = OpenCodeAdapter()
         findings = [
-            RuleFinding(rule_id="R-001", title="t", severity=Severity.HIGH,
-                        decision="deny", message="blocked",
-                        additional_context="hint for the agent"),
+            RuleFinding(
+                rule_id="R-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="deny",
+                message="blocked",
+                additional_context="hint for the agent",
+            ),
         ]
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision="deny", context="hint for the agent", updated_input={},
+            "PreToolUse",
+            findings,
+            decision="deny",
+            context="hint for the agent",
+            updated_input={},
         )
-        assert output["action"] == "block"
-        assert output["context"] == "hint for the agent"
-        assert "R-001" in output["reason"]
+        rendered = require_rendered(output)
+        assert rendered["action"] == "block"
+        assert rendered["context"] == "hint for the agent"
+        assert "R-001" in test_support.required_string(rendered, "reason")
 
     def test_posttool_with_context_and_decision(self):
         """PostToolUse block + context → both in output."""
         adapter = OpenCodeAdapter()
         findings = [
-            RuleFinding(rule_id="Q-001", title="t", severity=Severity.MEDIUM,
-                        decision="block", message="quality issue",
-                        additional_context="consider adding tests"),
+            RuleFinding(
+                rule_id="Q-001",
+                title="t",
+                severity=Severity.MEDIUM,
+                decision="block",
+                message="quality issue",
+                additional_context="consider adding tests",
+            ),
         ]
         output = adapter.render_output(
-            "PostToolUse", findings,
-            decision="block", context="consider adding tests", updated_input={},
+            "PostToolUse",
+            findings,
+            decision="block",
+            context="consider adding tests",
+            updated_input={},
         )
-        assert output["action"] == "warn"
-        assert output["context"] == "consider adding tests"
-        assert "Q-001" in output["reason"]
+        rendered = require_rendered(output)
+        assert rendered["action"] == "warn"
+        assert rendered["context"] == "consider adding tests"
+        assert "Q-001" in test_support.required_string(rendered, "reason")
 
     def test_posttool_context_only(self):
         """PostToolUse with only context, no block decision."""
         adapter = OpenCodeAdapter()
         findings = [
-            RuleFinding(rule_id="CTX-001", title="t", severity=Severity.LOW,
-                        additional_context="check test coverage"),
+            RuleFinding(
+                rule_id="CTX-001",
+                title="t",
+                severity=Severity.LOW,
+                additional_context="check test coverage",
+            ),
         ]
         output = adapter.render_output(
-            "PostToolUse", findings,
-            decision=None, context="check test coverage", updated_input={},
+            "PostToolUse",
+            findings,
+            decision=None,
+            context="check test coverage",
+            updated_input={},
         )
         assert output == {"context": "check test coverage"}
 
@@ -959,65 +1337,108 @@ class TestOpenCodeAdapter:
         """Stop with context but no block → context action."""
         adapter = OpenCodeAdapter()
         findings = [
-            RuleFinding(rule_id="CTX", title="t", severity=Severity.LOW,
-                        additional_context="remember to commit"),
+            RuleFinding(
+                rule_id="CTX",
+                title="t",
+                severity=Severity.LOW,
+                additional_context="remember to commit",
+            ),
         ]
         output = adapter.render_output(
-            "Stop", findings,
-            decision=None, context="remember to commit", updated_input={},
+            "Stop",
+            findings,
+            decision=None,
+            context="remember to commit",
+            updated_input={},
         )
         assert output == {"action": "context", "context": "remember to commit"}
 
     def test_permission_allow_with_updated_input(self):
         adapter = OpenCodeAdapter()
         findings = [
-            RuleFinding(rule_id="MOD-001", title="t", severity=Severity.LOW,
-                        decision="allow", updated_input={"command": "echo safe"}),
+            RuleFinding(
+                rule_id="MOD-001",
+                title="t",
+                severity=Severity.LOW,
+                decision="allow",
+                updated_input={"command": "echo safe"},
+            ),
         ]
         output = adapter.render_output(
-            "PermissionRequest", findings,
-            decision="allow", context=None, updated_input={"command": "echo safe"},
+            "PermissionRequest",
+            findings,
+            decision="allow",
+            context=None,
+            updated_input={"command": "echo safe"},
         )
-        assert output["action"] == "allow"
-        assert output["updated_args"] == {"command": "echo safe"}
+        rendered = require_rendered(output)
+        assert rendered["action"] == "allow"
+        assert rendered["updated_args"] == {"command": "echo safe"}
 
     def test_permission_allow_no_updated_input_returns_none(self):
         """PermissionRequest allow without updated_input → nothing to do."""
         adapter = OpenCodeAdapter()
         findings = [
-            RuleFinding(rule_id="X", title="t", severity=Severity.LOW,
-                        decision="allow"),
+            RuleFinding(
+                rule_id="X", title="t", severity=Severity.LOW, decision="allow"
+            ),
         ]
-        assert adapter.render_output(
-            "PermissionRequest", findings,
-            decision="allow", context=None, updated_input={},
-        ) is None
+        assert (
+            adapter.render_output(
+                "PermissionRequest",
+                findings,
+                decision="allow",
+                context=None,
+                updated_input={},
+            )
+            is None
+        )
 
     def test_unknown_event_returns_none(self):
         adapter = OpenCodeAdapter()
         findings = [
-            RuleFinding(rule_id="X", title="t", severity=Severity.HIGH,
-                        decision="block", message="m"),
+            RuleFinding(
+                rule_id="X",
+                title="t",
+                severity=Severity.HIGH,
+                decision="block",
+                message="m",
+            ),
         ]
-        assert adapter.render_output(
-            "TaskCompleted", findings,
-            decision="block", context=None, updated_input={},
-        ) is None
+        assert (
+            adapter.render_output(
+                "TaskCompleted",
+                findings,
+                decision="block",
+                context=None,
+                updated_input={},
+            )
+            is None
+        )
 
 
 # ===========================================================================
 # Base adapter helpers
 # ===========================================================================
 
+
 class TestBaseAdapterHelpers:
     """Test the static helper methods on PlatformAdapter."""
 
     def test_join_messages_formats_rule_id_and_severity(self):
         findings = [
-            RuleFinding(rule_id="GIT-001", title="t", severity=Severity.HIGH,
-                        message="hook bypass detected"),
-            RuleFinding(rule_id="SYS-002", title="t", severity=Severity.CRITICAL,
-                        message="system path violation"),
+            RuleFinding(
+                rule_id="GIT-001",
+                title="t",
+                severity=Severity.HIGH,
+                message="hook bypass detected",
+            ),
+            RuleFinding(
+                rule_id="SYS-002",
+                title="t",
+                severity=Severity.CRITICAL,
+                message="system path violation",
+            ),
         ]
         text = PlatformAdapter.join_messages(findings)
         assert "[GIT-001 | HIGH]" in text
@@ -1028,7 +1449,9 @@ class TestBaseAdapterHelpers:
     def test_join_messages_skips_none_messages(self):
         findings = [
             RuleFinding(rule_id="A", title="t", severity=Severity.LOW, message=None),
-            RuleFinding(rule_id="B", title="t", severity=Severity.LOW, message="visible"),
+            RuleFinding(
+                rule_id="B", title="t", severity=Severity.LOW, message="visible"
+            ),
         ]
         text = PlatformAdapter.join_messages(findings)
         assert "visible" in text
@@ -1039,10 +1462,34 @@ class TestBaseAdapterHelpers:
 
     def test_decision_findings_filters_correctly(self):
         findings = [
-            RuleFinding(rule_id="A", title="t", severity=Severity.HIGH, decision="deny", message="a"),
-            RuleFinding(rule_id="B", title="t", severity=Severity.LOW, decision="allow", message="b"),
-            RuleFinding(rule_id="C", title="t", severity=Severity.MEDIUM, decision="deny", message="c"),
-            RuleFinding(rule_id="D", title="t", severity=Severity.LOW, decision=None, message="d"),
+            RuleFinding(
+                rule_id="A",
+                title="t",
+                severity=Severity.HIGH,
+                decision="deny",
+                message="a",
+            ),
+            RuleFinding(
+                rule_id="B",
+                title="t",
+                severity=Severity.LOW,
+                decision="allow",
+                message="b",
+            ),
+            RuleFinding(
+                rule_id="C",
+                title="t",
+                severity=Severity.MEDIUM,
+                decision="deny",
+                message="c",
+            ),
+            RuleFinding(
+                rule_id="D",
+                title="t",
+                severity=Severity.LOW,
+                decision=None,
+                message="d",
+            ),
         ]
         deny_findings = PlatformAdapter.decision_findings(findings, "deny")
         assert [f.rule_id for f in deny_findings] == ["A", "C"]
@@ -1061,6 +1508,7 @@ class TestBaseAdapterHelpers:
 # Multi-finding edge cases (cross-adapter)
 # ===========================================================================
 
+
 class TestMultiFindingBehavior:
     """Test what happens when the engine produces multiple findings with
     mixed decisions, and the adapter has to render a coherent output.
@@ -1073,17 +1521,36 @@ class TestMultiFindingBehavior:
     def _make_findings(self):
         """Three findings: deny (HIGH), allow (LOW), context-only (MEDIUM)."""
         return [
-            RuleFinding(rule_id="DENY-001", title="t", severity=Severity.HIGH,
-                        decision="deny", message="blocked by policy"),
-            RuleFinding(rule_id="ALLOW-001", title="t", severity=Severity.LOW,
-                        decision="allow", updated_input={"command": "safe"}),
-            RuleFinding(rule_id="CTX-001", title="t", severity=Severity.MEDIUM,
-                        additional_context="extra context here"),
+            RuleFinding(
+                rule_id="DENY-001",
+                title="t",
+                severity=Severity.HIGH,
+                decision="deny",
+                message="blocked by policy",
+            ),
+            RuleFinding(
+                rule_id="ALLOW-001",
+                title="t",
+                severity=Severity.LOW,
+                decision="allow",
+                updated_input={"command": "safe"},
+            ),
+            RuleFinding(
+                rule_id="CTX-001",
+                title="t",
+                severity=Severity.MEDIUM,
+                additional_context="extra context here",
+            ),
         ]
 
     def test_claude_deny_wins_over_allow(self):
         """With mixed deny+allow, Claude adapter should deny (highest priority)."""
-        from vibeforcer.engine import _top_decision, _collect_context, _merge_updated_input
+        from vibeforcer.engine import (
+            _top_decision,
+            _collect_context,
+            _merge_updated_input,
+        )
+
         findings = self._make_findings()
         decision = _top_decision(findings)
         context = _collect_context(findings)
@@ -1091,20 +1558,30 @@ class TestMultiFindingBehavior:
 
         adapter = ClaudeAdapter()
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision=decision, context=context, updated_input=updated,
+            "PreToolUse",
+            findings,
+            decision=decision,
+            context=context,
+            updated_input=updated,
         )
-        spec = output["hookSpecificOutput"]
+        spec = require_spec(output)
         # Deny wins
         assert spec["permissionDecision"] == "deny"
-        assert "DENY-001" in spec["permissionDecisionReason"]
+        assert "DENY-001" in test_support.required_string(
+            spec, "permissionDecisionReason"
+        )
         # Context still included
         assert spec["additionalContext"] == "extra context here"
         # Updated input still included (forward-looking)
         assert spec["updatedInput"] == {"command": "safe"}
 
     def test_codex_deny_wins_over_allow(self):
-        from vibeforcer.engine import _top_decision, _collect_context, _merge_updated_input
+        from vibeforcer.engine import (
+            _top_decision,
+            _collect_context,
+            _merge_updated_input,
+        )
+
         findings = self._make_findings()
         decision = _top_decision(findings)
         context = _collect_context(findings)
@@ -1112,15 +1589,25 @@ class TestMultiFindingBehavior:
 
         adapter = CodexAdapter()
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision=decision, context=context, updated_input=updated,
+            "PreToolUse",
+            findings,
+            decision=decision,
+            context=context,
+            updated_input=updated,
         )
-        spec = output["hookSpecificOutput"]
+        spec = require_spec(output)
         assert spec["permissionDecision"] == "deny"
-        assert "DENY-001" in spec["permissionDecisionReason"]
+        assert "DENY-001" in test_support.required_string(
+            spec, "permissionDecisionReason"
+        )
 
     def test_opencode_deny_wins_over_allow(self):
-        from vibeforcer.engine import _top_decision, _collect_context, _merge_updated_input
+        from vibeforcer.engine import (
+            _top_decision,
+            _collect_context,
+            _merge_updated_input,
+        )
+
         findings = self._make_findings()
         decision = _top_decision(findings)
         context = _collect_context(findings)
@@ -1128,24 +1615,41 @@ class TestMultiFindingBehavior:
 
         adapter = OpenCodeAdapter()
         output = adapter.render_output(
-            "PreToolUse", findings,
-            decision=decision, context=context, updated_input=updated,
+            "PreToolUse",
+            findings,
+            decision=decision,
+            context=context,
+            updated_input=updated,
         )
-        assert output["action"] == "block"
-        assert "DENY-001" in output["reason"]
+        rendered = require_rendered(output)
+        assert rendered["action"] == "block"
+        assert "DENY-001" in test_support.required_string(rendered, "reason")
         # Context included despite block
-        assert output["context"] == "extra context here"
+        assert rendered["context"] == "extra context here"
 
     def test_context_deduplication(self):
         """Identical context strings should be deduplicated."""
         from vibeforcer.engine import _collect_context
+
         findings = [
-            RuleFinding(rule_id="A", title="t", severity=Severity.LOW,
-                        additional_context="same thing"),
-            RuleFinding(rule_id="B", title="t", severity=Severity.LOW,
-                        additional_context="same thing"),
-            RuleFinding(rule_id="C", title="t", severity=Severity.LOW,
-                        additional_context="different thing"),
+            RuleFinding(
+                rule_id="A",
+                title="t",
+                severity=Severity.LOW,
+                additional_context="same thing",
+            ),
+            RuleFinding(
+                rule_id="B",
+                title="t",
+                severity=Severity.LOW,
+                additional_context="same thing",
+            ),
+            RuleFinding(
+                rule_id="C",
+                title="t",
+                severity=Severity.LOW,
+                additional_context="different thing",
+            ),
         ]
         context = _collect_context(findings)
         assert context == "same thing\n\ndifferent thing"
@@ -1153,11 +1657,20 @@ class TestMultiFindingBehavior:
     def test_updated_input_last_write_wins(self):
         """When multiple findings set the same key, last one wins."""
         from vibeforcer.engine import _merge_updated_input
+
         findings = [
-            RuleFinding(rule_id="A", title="t", severity=Severity.LOW,
-                        updated_input={"command": "first"}),
-            RuleFinding(rule_id="B", title="t", severity=Severity.LOW,
-                        updated_input={"command": "second", "extra": "value"}),
+            RuleFinding(
+                rule_id="A",
+                title="t",
+                severity=Severity.LOW,
+                updated_input={"command": "first"},
+            ),
+            RuleFinding(
+                rule_id="B",
+                title="t",
+                severity=Severity.LOW,
+                updated_input={"command": "second", "extra": "value"},
+            ),
         ]
         merged = _merge_updated_input(findings)
         assert merged == {"command": "second", "extra": "value"}
@@ -1166,6 +1679,7 @@ class TestMultiFindingBehavior:
 # ===========================================================================
 # Fixture replay — full engine pipeline
 # ===========================================================================
+
 
 class TestFixtureReplay:
     """Load real fixtures and replay them through the engine.
@@ -1180,9 +1694,9 @@ class TestFixtureReplay:
         )
         result = evaluate_payload(payload, platform="codex")
         assert result.output is not None
-        spec = result.output.get("hookSpecificOutput", {})
-        assert spec.get("permissionDecision") == "deny"
-        assert "GIT-001" in spec.get("permissionDecisionReason", "")
+        spec = require_spec(test_support.require_output(result))
+        assert test_support.output_string(spec, "permissionDecision") == "deny"
+        assert "GIT-001" in test_support.output_string(spec, "permissionDecisionReason")
         # Also verify findings list
         ids = {f.rule_id for f in result.findings}
         assert "GIT-001" in ids
@@ -1193,8 +1707,8 @@ class TestFixtureReplay:
         )
         result = evaluate_payload(payload, platform="codex")
         assert result.output is not None
-        spec = result.output.get("hookSpecificOutput", {})
-        assert spec.get("permissionDecision") == "deny"
+        spec = require_spec(test_support.require_output(result))
+        assert test_support.output_string(spec, "permissionDecision") == "deny"
 
     def test_codex_session_start_produces_context(self):
         payload = json.loads(
@@ -1212,8 +1726,9 @@ class TestFixtureReplay:
         )
         result = evaluate_payload(payload, platform="opencode")
         assert result.output is not None
-        assert result.output["action"] == "block"
-        assert "GIT-001" in result.output["reason"]
+        rendered = test_support.require_output(result)
+        assert rendered["action"] == "block"
+        assert "GIT-001" in test_support.required_string(rendered, "reason")
 
     def test_opencode_write_protected_denied(self):
         payload = json.loads(
@@ -1224,8 +1739,9 @@ class TestFixtureReplay:
         assert result.output["action"] == "block"
         # Protected path rule should fire
         ids = {f.rule_id for f in result.findings}
-        assert any("PROTECT" in rid or "CUPCAKE" in rid or "SECURITY" in rid
-                    for rid in ids), f"Expected a protection rule, got: {ids}"
+        assert any(
+            "PROTECT" in rid or "CUPCAKE" in rid or "SECURITY" in rid for rid in ids
+        ), f"Expected a protection rule, got: {ids}"
 
     def test_opencode_session_idle_no_crash(self):
         payload = json.loads(
@@ -1244,7 +1760,7 @@ class TestFixtureReplay:
         assert result.errors == []
         # rm -rf should trigger something
         if result.output:
-            assert result.output["action"] == "block"
+            assert test_support.require_output(result)["action"] == "block"
 
     def test_codex_posttool_no_crash(self):
         payload = json.loads(
@@ -1282,13 +1798,14 @@ class TestFixtureReplay:
 # Cross-platform: same findings, different output shapes
 # ===========================================================================
 
+
 class TestCrossPlatform:
     """Same payload through all adapters produces correct per-platform output."""
 
     def _git_no_verify_payload(self):
         return {
             "session_id": "cross-test",
-            "cwd": str(BUNDLE_ROOT),
+            "cwd": str(test_support.BUNDLE_ROOT),
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
             "tool_input": {"command": "git commit --no-verify -m 'test'"},
@@ -1304,13 +1821,17 @@ class TestCrossPlatform:
         assert claude_result.output is not None
         assert codex_result.output is not None
 
-        c_spec = claude_result.output.get("hookSpecificOutput", {})
-        x_spec = codex_result.output.get("hookSpecificOutput", {})
+        c_spec = require_spec(test_support.require_output(claude_result))
+        x_spec = require_spec(test_support.require_output(codex_result))
 
-        assert c_spec.get("permissionDecision") == "deny"
-        assert x_spec.get("permissionDecision") == "deny"
-        assert "GIT-001" in c_spec.get("permissionDecisionReason", "")
-        assert "GIT-001" in x_spec.get("permissionDecisionReason", "")
+        assert test_support.output_string(c_spec, "permissionDecision") == "deny"
+        assert test_support.output_string(x_spec, "permissionDecision") == "deny"
+        assert "GIT-001" in test_support.output_string(
+            c_spec, "permissionDecisionReason"
+        )
+        assert "GIT-001" in test_support.output_string(
+            x_spec, "permissionDecisionReason"
+        )
 
     def test_opencode_produces_block_action(self):
         """OpenCode uses action:block instead of hookSpecificOutput."""
@@ -1322,8 +1843,9 @@ class TestCrossPlatform:
 
         result = evaluate_payload(oc_payload, platform="opencode")
         assert result.output is not None
-        assert result.output["action"] == "block"
-        assert "GIT-001" in result.output["reason"]
+        rendered = test_support.require_output(result)
+        assert rendered["action"] == "block"
+        assert "GIT-001" in test_support.required_string(rendered, "reason")
 
     def test_same_findings_different_format(self):
         """All platforms produce the same findings, just rendered differently."""
@@ -1351,30 +1873,35 @@ class TestCrossPlatform:
 # CLI --platform integration
 # ===========================================================================
 
+
 class TestCLIPlatform:
     def test_handle_with_platform_flag(self):
         """Verify CLI accepts --platform without error."""
         from vibeforcer.cli import build_parser
+
         parser = build_parser()
         args = parser.parse_args(["handle", "--platform", "codex"])
         assert args.platform == "codex"
 
     def test_handle_default_platform(self):
         from vibeforcer.cli import build_parser
+
         parser = build_parser()
         args = parser.parse_args(["handle"])
         assert args.platform == "claude"
 
     def test_replay_with_platform(self):
         from vibeforcer.cli import build_parser
+
         parser = build_parser()
-        args = parser.parse_args([
-            "replay", "--payload", "test.json", "--platform", "opencode"
-        ])
+        args = parser.parse_args(
+            ["replay", "--payload", "test.json", "--platform", "opencode"]
+        )
         assert args.platform == "opencode"
 
     def test_invalid_platform_rejected(self):
         from vibeforcer.cli import build_parser
+
         parser = build_parser()
         with pytest.raises(SystemExit):
             parser.parse_args(["handle", "--platform", "vim"])

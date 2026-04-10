@@ -3,6 +3,7 @@
 Tests use tmp_project to create real filesystem layouts with conftest.py,
 sibling test files, and requirements files so enrichment can discover them.
 """
+
 from __future__ import annotations
 
 import json
@@ -11,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from tests import conftest as test_support
+
+from vibeforcer._types import ObjectDict
 from vibeforcer.engine import evaluate_payload
 from vibeforcer.enrichment import (
     _discover_fixtures,
@@ -19,7 +23,6 @@ from vibeforcer.enrichment import (
 )
 from vibeforcer.context import build_context
 from vibeforcer.models import RuleFinding, Severity
-from conftest import assert_denied_by, finding_ids
 
 
 # ===========================================================================
@@ -27,13 +30,17 @@ from conftest import assert_denied_by, finding_ids
 # ===========================================================================
 
 
-def _make_conftest(directory: Path, fixtures: list[str], with_params: list[str] | None = None) -> Path:
+def _make_conftest(
+    directory: Path, fixtures: list[str], with_params: list[str] | None = None
+) -> Path:
     """Create a conftest.py with the given fixture names."""
     with_params = with_params or []
     lines = ["import pytest\n"]
     for name in fixtures:
         if name in with_params:
-            lines.append(f"@pytest.fixture(params=[1, 2, 3])\ndef {name}(request):\n    return request.param\n\n")
+            lines.append(
+                f"@pytest.fixture(params=[1, 2, 3])\ndef {name}(request):\n    return request.param\n\n"
+            )
         else:
             lines.append(f"@pytest.fixture\ndef {name}():\n    return 'value'\n\n")
     conftest = directory / "conftest.py"
@@ -41,23 +48,25 @@ def _make_conftest(directory: Path, fixtures: list[str], with_params: list[str] 
     return conftest
 
 
-def _make_sibling_test(directory: Path, name: str, has_parametrize: bool = False) -> Path:
+def _make_sibling_test(
+    directory: Path, name: str, has_parametrize: bool = False
+) -> Path:
     """Create a sibling test file, optionally with @pytest.mark.parametrize."""
     if has_parametrize:
         content = (
-            'import pytest\n\n'
+            "import pytest\n\n"
             '@pytest.mark.parametrize("x,expected", [(1, True), (2, False)])\n'
-            'def test_example(x, expected):\n'
-            '    assert process(x) == expected\n'
+            "def test_example(x, expected):\n"
+            "    assert process(x) == expected\n"
         )
     else:
-        content = 'def test_simple():\n    assert True\n'
+        content = "def test_simple():\n    assert True\n"
     path = directory / name
     path.write_text(content, encoding="utf-8")
     return path
 
 
-def _pretool_write_payload(file_path: str, content: str, cwd: str) -> dict:
+def _pretool_write_payload(file_path: str, content: str, cwd: str) -> ObjectDict:
     return {
         "session_id": "test-enrichment",
         "cwd": cwd,
@@ -101,7 +110,9 @@ class TestDiscoverFixtures:
     def test_identifies_parametrized_fixtures(self, tmp_path):
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
-        _make_conftest(tests_dir, ["normal", "data_driven"], with_params=["data_driven"])
+        _make_conftest(
+            tests_dir, ["normal", "data_driven"], with_params=["data_driven"]
+        )
         test_file = tests_dir / "test_x.py"
         test_file.write_text("# test", encoding="utf-8")
 
@@ -216,12 +227,16 @@ class TestPYTEST003Enrichment:
         _make_conftest(tests_dir, ["db_session", "client"])
 
         payload = _pretool_write_payload(
-            "tests/test_items.py", self.LOOP_CODE, str(tmp_project),
+            "tests/test_items.py",
+            self.LOOP_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-003")
+        test_support.assert_denied_by(result, "PY-TEST-003")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "`db_session`" in reason or "`client`" in reason, (
             f"Expected fixture names in reason, got: {reason}"
         )
@@ -234,12 +249,16 @@ class TestPYTEST003Enrichment:
         _make_sibling_test(tests_dir, "test_math.py", has_parametrize=True)
 
         payload = _pretool_write_payload(
-            "tests/test_items.py", self.LOOP_CODE, str(tmp_project),
+            "tests/test_items.py",
+            self.LOOP_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-003")
+        test_support.assert_denied_by(result, "PY-TEST-003")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "test_math.py" in reason, f"Expected sibling ref in reason: {reason}"
 
     def test_enriched_additional_context(self, tmp_project):
@@ -249,12 +268,16 @@ class TestPYTEST003Enrichment:
         _make_conftest(tests_dir, ["db", "client", "auth"])
 
         payload = _pretool_write_payload(
-            "tests/test_items.py", self.LOOP_CODE, str(tmp_project),
+            "tests/test_items.py",
+            self.LOOP_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-003")
+        test_support.assert_denied_by(result, "PY-TEST-003")
 
-        context = result.output["hookSpecificOutput"].get("additionalContext", "")
+        context = test_support.output_string(
+            test_support.hook_output(result), "additionalContext"
+        )
         assert "AVAILABLE FIXTURES" in context or "COMPLIANT ALTERNATIVES" in context, (
             f"Expected enrichment in additionalContext: {context}"
         )
@@ -266,10 +289,12 @@ class TestPYTEST003Enrichment:
         # No conftest.py
 
         payload = _pretool_write_payload(
-            "tests/test_items.py", self.LOOP_CODE, str(tmp_project),
+            "tests/test_items.py",
+            self.LOOP_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-003")
+        test_support.assert_denied_by(result, "PY-TEST-003")
 
     def test_cross_platform_codex(self, tmp_project):
         """Codex adapter: enrichment lands in permissionDecisionReason."""
@@ -278,12 +303,15 @@ class TestPYTEST003Enrichment:
         _make_conftest(tests_dir, ["db_session"])
 
         payload = _pretool_write_payload(
-            "tests/test_items.py", self.LOOP_CODE, str(tmp_project),
+            "tests/test_items.py",
+            self.LOOP_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload, platform="codex")
         assert result.output is not None
-        spec = result.output.get("hookSpecificOutput", {})
-        reason = spec.get("permissionDecisionReason", "")
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "PY-TEST-003" in reason
         assert "`db_session`" in reason, (
             f"Codex reason should include fixture names: {reason}"
@@ -296,11 +324,15 @@ class TestPYTEST003Enrichment:
         _make_conftest(tests_dir, ["db_session"])
 
         payload = _pretool_write_payload(
-            "tests/test_items.py", self.LOOP_CODE, str(tmp_project),
+            "tests/test_items.py",
+            self.LOOP_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload, platform="opencode")
         assert result.output is not None
-        reason = result.output.get("reason", "")
+        reason = test_support.required_string(
+            test_support.require_output(result), "reason"
+        )
         assert "PY-TEST-003" in reason
         assert "`db_session`" in reason, (
             f"OpenCode reason should include fixture names: {reason}"
@@ -328,12 +360,16 @@ class TestPYTEST001Enrichment:
         _make_conftest(tests_dir, ["user_factory"])
 
         payload = _pretool_write_payload(
-            "tests/test_user.py", self.ROULETTE_CODE, str(tmp_project),
+            "tests/test_user.py",
+            self.ROULETTE_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-001")
+        test_support.assert_denied_by(result, "PY-TEST-001")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "`user_factory`" in reason, f"Expected fixture in reason: {reason}"
 
     def test_includes_split_tip(self, tmp_project):
@@ -341,12 +377,16 @@ class TestPYTEST001Enrichment:
         tests_dir.mkdir(exist_ok=True)
 
         payload = _pretool_write_payload(
-            "tests/test_user.py", self.ROULETTE_CODE, str(tmp_project),
+            "tests/test_user.py",
+            self.ROULETTE_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-001")
+        test_support.assert_denied_by(result, "PY-TEST-001")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "splitting" in reason.lower() or "split" in reason.lower(), (
             f"Expected split tip in reason: {reason}"
         )
@@ -373,12 +413,16 @@ class TestPYTEST004Enrichment:
         _make_conftest(tests_dir, ["shared_db", "client"])
 
         payload = _pretool_write_payload(
-            "tests/test_db.py", self.FIXTURE_CODE, str(tmp_project),
+            "tests/test_db.py",
+            self.FIXTURE_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-004")
+        test_support.assert_denied_by(result, "PY-TEST-004")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "`shared_db`" in reason or "`client`" in reason, (
             f"Expected existing fixtures in reason: {reason}"
         )
@@ -389,12 +433,16 @@ class TestPYTEST004Enrichment:
         # No conftest.py at all
 
         payload = _pretool_write_payload(
-            "tests/test_db.py", self.FIXTURE_CODE, str(tmp_project),
+            "tests/test_db.py",
+            self.FIXTURE_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-004")
+        test_support.assert_denied_by(result, "PY-TEST-004")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "create" in reason.lower() or "no conftest" in reason.lower(), (
             f"Expected create suggestion in reason: {reason}"
         )
@@ -411,7 +459,7 @@ class TestPYTEST002Enrichment:
         "def test_api_call():\n"
         "    start_server()\n"
         "    time.sleep(5)\n"
-        "    response = client.get(\"/api/v1/health\")\n"
+        '    response = client.get("/api/v1/health")\n'
         "    assert response.status_code == 200\n"
     )
 
@@ -421,12 +469,16 @@ class TestPYTEST002Enrichment:
         _make_conftest(tests_dir, ["server"])
 
         payload = _pretool_write_payload(
-            "tests/test_api.py", self.SLEEP_CODE, str(tmp_project),
+            "tests/test_api.py",
+            self.SLEEP_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-002")
+        test_support.assert_denied_by(result, "PY-TEST-002")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "`server`" in reason, f"Expected fixture in reason: {reason}"
 
     def test_detects_freezegun_in_requirements(self, tmp_project):
@@ -436,12 +488,16 @@ class TestPYTEST002Enrichment:
         req.write_text("freezegun==1.2.3\nrequests\n", encoding="utf-8")
 
         payload = _pretool_write_payload(
-            "tests/test_api.py", self.SLEEP_CODE, str(tmp_project),
+            "tests/test_api.py",
+            self.SLEEP_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TEST-002")
+        test_support.assert_denied_by(result, "PY-TEST-002")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "freezegun" in reason.lower(), (
             f"Expected freezegun mention in reason: {reason}"
         )
@@ -467,22 +523,30 @@ class TestPYTYPE001Enrichment:
 
     def test_suggests_typeddict_for_dicts(self, tmp_project):
         payload = _pretool_write_payload(
-            "src/models.py", self.ANY_DICT_CODE, str(tmp_project),
+            "src/models.py",
+            self.ANY_DICT_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TYPE-001")
+        test_support.assert_denied_by(result, "PY-TYPE-001")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "TypedDict" in reason, f"Expected TypedDict suggestion: {reason}"
 
     def test_suggests_callable_for_callbacks(self, tmp_project):
         payload = _pretool_write_payload(
-            "src/handlers.py", self.ANY_CALLBACK_CODE, str(tmp_project),
+            "src/handlers.py",
+            self.ANY_CALLBACK_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TYPE-001")
+        test_support.assert_denied_by(result, "PY-TYPE-001")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "Callable" in reason, f"Expected Callable suggestion: {reason}"
 
 
@@ -501,7 +565,7 @@ class TestEnrichmentSafety:
         )
         result = evaluate_payload(payload)
         # Should still deny regardless of enrichment
-        assert_denied_by(result, "PY-TEST-003")
+        test_support.assert_denied_by(result, "PY-TEST-003")
 
     def test_original_message_preserved(self):
         """Enrichment should append, not replace the original message."""
@@ -515,14 +579,18 @@ class TestEnrichmentSafety:
         )
         # With no hits, enrichment should be a no-op
         from vibeforcer.context import build_context
-        ctx = build_context({
-            "session_id": "t",
-            "cwd": "/tmp",
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Write",
-            "tool_input": {},
-        })
+
+        ctx = build_context(
+            {
+                "session_id": "t",
+                "cwd": "/tmp",
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Write",
+                "tool_input": {},
+            }
+        )
         enrich_findings([finding], ctx)
+        assert finding.message is not None
         assert finding.message.startswith("Original denial message")
 
 
@@ -540,19 +608,19 @@ class TestRegressionFixtures:
 
     def test_loop_assert_fixture(self, load_fixture):
         result = evaluate_payload(load_fixture("pretool_test_loop_assert.json"))
-        assert_denied_by(result, "PY-TEST-003")
+        test_support.assert_denied_by(result, "PY-TEST-003")
 
     def test_assertion_roulette_fixture(self, load_fixture):
         result = evaluate_payload(load_fixture("pretool_assertion_roulette.json"))
-        assert_denied_by(result, "PY-TEST-001")
+        test_support.assert_denied_by(result, "PY-TEST-001")
 
     def test_test_sleep_fixture(self, load_fixture):
         result = evaluate_payload(load_fixture("pretool_test_sleep.json"))
-        assert_denied_by(result, "PY-TEST-002")
+        test_support.assert_denied_by(result, "PY-TEST-002")
 
     def test_fixture_outside_conftest_fixture(self, load_fixture):
         result = evaluate_payload(load_fixture("pretool_fixture_outside_conftest.json"))
-        assert_denied_by(result, "PY-TEST-004")
+        test_support.assert_denied_by(result, "PY-TEST-004")
 
 
 # ===========================================================================
@@ -578,12 +646,16 @@ class TestPYCODE008Enrichment:
         (src_dir / "processor.py").write_text(long_func, encoding="utf-8")
 
         payload = _pretool_write_payload(
-            "src/processor.py", long_func, str(tmp_project),
+            "src/processor.py",
+            long_func,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-CODE-008")
+        test_support.assert_denied_by(result, "PY-CODE-008")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "extraction" in reason.lower() or "structure" in reason.lower(), (
             f"Expected extraction hints in reason: {reason}"
         )
@@ -599,9 +671,11 @@ class TestPYCODE008Enrichment:
 
         payload = _pretool_write_payload("src/big.py", long_func, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-CODE-008")
+        test_support.assert_denied_by(result, "PY-CODE-008")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "split" in reason.lower() or "helper" in reason.lower(), (
             f"Expected split advice: {reason}"
         )
@@ -625,9 +699,11 @@ class TestPYCODE009Enrichment:
 
         payload = _pretool_write_payload("src/db.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-CODE-009")
+        test_support.assert_denied_by(result, "PY-CODE-009")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "`host`" in reason or "`port`" in reason, (
             f"Expected parameter names in reason: {reason}"
         )
@@ -649,9 +725,11 @@ class TestPYCODE009Enrichment:
 
         payload = _pretool_write_payload("src/db.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-CODE-009")
+        test_support.assert_denied_by(result, "PY-CODE-009")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "DbConfig" in reason, f"Expected existing dataclass ref: {reason}"
 
 
@@ -685,9 +763,11 @@ class TestPYCODE015Enrichment:
 
         payload = _pretool_write_payload("src/logic.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-CODE-015")
+        test_support.assert_denied_by(result, "PY-CODE-015")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "branch" in reason.lower() or "if" in reason.lower(), (
             f"Expected complexity breakdown: {reason}"
         )
@@ -725,8 +805,11 @@ class TestPYCODE012Enrichment:
 
         # Feature envy is decision="context", not deny — check findings directly
         envy_findings = [f for f in result.findings if f.rule_id == "PY-CODE-012"]
-        assert len(envy_findings) >= 1, f"Expected PY-CODE-012 finding, got: {[f.rule_id for f in result.findings]}"
+        assert len(envy_findings) >= 1, (
+            f"Expected PY-CODE-012 finding, got: {[f.rule_id for f in result.findings]}"
+        )
         msg = envy_findings[0].message
+        assert msg is not None
         assert "moving" in msg.lower() or "restructur" in msg.lower(), (
             f"Expected refactoring advice: {msg}"
         )
@@ -754,9 +837,11 @@ class TestPYCODE013Enrichment:
 
         payload = _pretool_write_payload("src/wrappers.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-CODE-013")
+        test_support.assert_denied_by(result, "PY-CODE-013")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "called" in reason.lower() or "time" in reason.lower(), (
             f"Expected usage info: {reason}"
         )
@@ -780,12 +865,16 @@ class TestPYEXC002Enrichment:
     def test_lists_called_functions(self, tmp_project):
         """Denial should list functions called in the try block."""
         payload = _pretool_write_payload(
-            "src/config.py", self.SILENT_EXCEPT_CODE, str(tmp_project),
+            "src/config.py",
+            self.SILENT_EXCEPT_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-EXC-002")
+        test_support.assert_denied_by(result, "PY-EXC-002")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "`read_file`" in reason or "`parse_json`" in reason, (
             f"Expected called function names: {reason}"
         )
@@ -793,12 +882,16 @@ class TestPYEXC002Enrichment:
     def test_includes_common_exceptions(self, tmp_project):
         """Denial should include common specific exception suggestions."""
         payload = _pretool_write_payload(
-            "src/config.py", self.SILENT_EXCEPT_CODE, str(tmp_project),
+            "src/config.py",
+            self.SILENT_EXCEPT_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-EXC-002")
+        test_support.assert_denied_by(result, "PY-EXC-002")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "FileNotFoundError" in reason or "ValueError" in reason, (
             f"Expected specific exception suggestions: {reason}"
         )
@@ -818,12 +911,16 @@ class TestPYLOG001Enrichment:
         req.write_text("structlog==23.1.0\nrequests\n", encoding="utf-8")
 
         payload = _pretool_write_payload(
-            "src/app.py", self.LOG_CODE, str(tmp_project),
+            "src/app.py",
+            self.LOG_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-LOG-001")
+        test_support.assert_denied_by(result, "PY-LOG-001")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "structlog" in reason.lower(), f"Expected structlog mention: {reason}"
 
     def test_finds_project_logger(self, tmp_project):
@@ -836,12 +933,16 @@ class TestPYLOG001Enrichment:
         )
 
         payload = _pretool_write_payload(
-            "src/app.py", self.LOG_CODE, str(tmp_project),
+            "src/app.py",
+            self.LOG_CODE,
+            str(tmp_project),
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-LOG-001")
+        test_support.assert_denied_by(result, "PY-LOG-001")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "logger.py" in reason, f"Expected logger.py reference: {reason}"
 
 
@@ -853,28 +954,26 @@ class TestPYLOG001Enrichment:
 class TestPYTYPE002Enrichment:
     def test_identifies_specific_suppression(self, tmp_project):
         """Denial should identify the specific type: ignore code."""
-        code = (
-            "def process(x):\n"
-            "    return x.value  # type: ignore[union-attr]\n"
-        )
+        code = "def process(x):\n    return x.value  # type: ignore[union-attr]\n"
         payload = _pretool_write_payload("src/proc.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TYPE-002")
+        test_support.assert_denied_by(result, "PY-TYPE-002")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "union-attr" in reason, f"Expected error code in reason: {reason}"
 
     def test_gives_fix_advice_for_arg_type(self, tmp_project):
         """Denial should give specific fix advice for arg-type errors."""
-        code = (
-            "def send(msg):\n"
-            "    channel.post(msg)  # type: ignore[arg-type]\n"
-        )
+        code = "def send(msg):\n    channel.post(msg)  # type: ignore[arg-type]\n"
         payload = _pretool_write_payload("src/sender.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-TYPE-002")
+        test_support.assert_denied_by(result, "PY-TYPE-002")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "arg-type" in reason, f"Expected arg-type advice: {reason}"
 
 
@@ -896,9 +995,11 @@ class TestPYQUALITY010Enrichment:
         code = "def retry():\n    timeout = 300\n    if timeout > 500:\n        pass\n"
         payload = _pretool_write_payload("src/retry.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-QUALITY-010")
+        test_support.assert_denied_by(result, "PY-QUALITY-010")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "constants.py" in reason, f"Expected constants.py reference: {reason}"
 
     def test_suggests_creating_constants(self, tmp_project):
@@ -906,9 +1007,11 @@ class TestPYQUALITY010Enrichment:
         code = "def retry():\n    timeout = 3600\n    pass\n"
         payload = _pretool_write_payload("src/retry.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-QUALITY-010")
+        test_support.assert_denied_by(result, "PY-QUALITY-010")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "constants" in reason.lower(), f"Expected constants suggestion: {reason}"
 
 
@@ -930,9 +1033,11 @@ class TestPYQUALITY009Enrichment:
         code = 'DATA = "/home/user/data/file.csv"\n'
         payload = _pretool_write_payload("src/loader.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-QUALITY-009")
+        test_support.assert_denied_by(result, "PY-QUALITY-009")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "config.py" in reason, f"Expected config.py reference: {reason}"
 
     def test_suggests_pathlib_pattern(self, tmp_project):
@@ -940,9 +1045,11 @@ class TestPYQUALITY009Enrichment:
         code = 'DATA = "/home/user/data/file.csv"\n'
         payload = _pretool_write_payload("src/loader.py", code, str(tmp_project))
         result = evaluate_payload(payload)
-        assert_denied_by(result, "PY-QUALITY-009")
+        test_support.assert_denied_by(result, "PY-QUALITY-009")
 
-        reason = result.output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = test_support.required_string(
+            test_support.hook_output(result), "permissionDecisionReason"
+        )
         assert "pathlib" in reason.lower() or "Path(" in reason, (
             f"Expected pathlib suggestion: {reason}"
         )

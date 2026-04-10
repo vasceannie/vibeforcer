@@ -5,14 +5,14 @@ import importlib
 import os
 from pathlib import Path
 
-_TOML_PARSER = None
+_toml_parser = None
 for module_name in ("tomllib", "tomli"):
     try:
         _module = importlib.import_module(module_name)
     except ModuleNotFoundError:
         continue
     if callable(getattr(_module, "loads", None)):
-        _TOML_PARSER = _module
+        _toml_parser = _module
         break
 
 from vibeforcer.models import RegexRuleConfig, RuntimeConfig
@@ -117,13 +117,13 @@ def detect_root() -> Path:
 
 def _load_toml(root: Path) -> dict[str, object]:
     """Load quality_gate.toml from project root if available."""
-    if _TOML_PARSER is None:
+    if _toml_parser is None:
         return {}
     for name in ("quality_gate.toml",):
         toml_path = root / name
         if toml_path.exists():
             try:
-                return _TOML_PARSER.loads(toml_path.read_text(encoding="utf-8"))
+                return _toml_parser.loads(toml_path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 warning(
                     "quality gate TOML load failed",

@@ -3,24 +3,28 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from vibeforcer._types import ObjectDict, ObjectMapping, object_dict
 from vibeforcer.constants import SELFTEST_SEPARATOR_WIDTH
+from vibeforcer.models import EngineResult
 
 VALID_PLATFORMS = ("claude", "codex", "opencode")
+PlatformName = str
 _PLATFORM_HELP = (
     f"Target platform. Choices: {', '.join(VALID_PLATFORMS)} (default: claude)"
 )
 
 
-def _load_stdin_json() -> dict:
+def _load_stdin_json() -> ObjectDict:
     raw = sys.stdin.read()
     if not raw.strip():
         return {}
-    return json.loads(raw)
+    return object_dict(json.loads(raw))
 
 
-def _dump_output(output: dict | None) -> int:
+def _dump_output(output: ObjectMapping | None) -> int:
     if output:
         sys.stdout.write(json.dumps(output, separators=(",", ":")) + "\n")
     return 0
@@ -73,7 +77,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_replay(args: argparse.Namespace) -> int:
     from vibeforcer.engine import evaluate_payload
 
-    payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
+    payload = object_dict(json.loads(Path(args.payload).read_text(encoding="utf-8")))
     platform = getattr(args, "platform", "claude")
     result = evaluate_payload(payload, platform=platform)
     if args.pretty:
@@ -137,7 +141,7 @@ def cmd_config_show(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _copy_prompt_context(base_dir: Path, resource_path) -> None:
+def _copy_prompt_context(base_dir: Path, resource_path: Callable[[str], Path]) -> None:
     ctx_dir = base_dir / "prompt_context"
     if ctx_dir.exists():
         return
@@ -181,7 +185,10 @@ def cmd_config_path(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_one_test(evaluate_payload, case: tuple[object, ...]) -> str:
+def _run_one_test(
+    evaluate_payload: Callable[[Mapping[str, object], PlatformName], EngineResult],
+    case: tuple[str, str, str, ObjectDict, PlatformName, bool],
+) -> str:
     label, event, tool, tool_input, platform, expect_deny = case
     payload = {
         "hook_event_name": event,
@@ -190,7 +197,7 @@ def _run_one_test(evaluate_payload, case: tuple[object, ...]) -> str:
         "cwd": "/tmp",
         "session_id": "self-test",
     }
-    result = evaluate_payload(payload, platform=str(platform))
+    result = evaluate_payload(payload, platform)
     deny_count = sum(1 for f in result.findings if f.decision == "deny")
     passed = (deny_count > 0) if bool(expect_deny) else (deny_count == 0)
     status = "PASS" if passed else "FAIL"
@@ -204,8 +211,8 @@ def cmd_test(_args: argparse.Namespace) -> int:
     print("vibeforcer self-test")
     print("=" * SELFTEST_SEPARATOR_WIDTH)
     env_path = str(Path.home() / ".env")
-    noverify = {"command": "git commit --no-verify -m 'test'"}
-    cases = [
+    noverify: ObjectDict = {"command": "git commit --no-verify -m 'test'"}
+    cases: list[tuple[str, str, str, ObjectDict, PlatformName, bool]] = [
         ("git --no-verify → deny", "PreToolUse", "Bash", noverify, "claude", True),
         (
             ".env write → deny",

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
 
+from vibeforcer._types import ObjectDict, ObjectMapping
 from vibeforcer.models import RuleFinding
 from vibeforcer.rules.base import join_messages as _join_messages
 
@@ -13,7 +13,7 @@ class PlatformAdapter(ABC):
     name: str = ""
 
     @abstractmethod
-    def normalize_payload(self, raw: dict[str, Any]) -> dict[str, Any]:
+    def normalize_payload(self, raw: ObjectMapping) -> ObjectDict:
         """Convert a raw platform payload into canonical form."""
 
     @abstractmethod
@@ -23,9 +23,9 @@ class PlatformAdapter(ABC):
         findings: list[RuleFinding],
         *,
         context: str | None = None,
-        updated_input: dict[str, Any] | None = None,
+        updated_input: ObjectDict | None = None,
         decision: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> ObjectDict | None:
         """Render findings into platform-native JSON for stdout."""
 
     join_messages = staticmethod(_join_messages)

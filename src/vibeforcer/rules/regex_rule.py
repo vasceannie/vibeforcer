@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from vibeforcer.models import RegexRuleConfig, RuleFinding, Severity
 from vibeforcer.rules.base import Rule
 from vibeforcer.util.payloads import any_path_matches
+
+if TYPE_CHECKING:
+    from vibeforcer.context import HookContext
 
 
 @dataclass(slots=True)
@@ -32,14 +35,20 @@ class RegexRule(Rule):
     def _tool_matches(self, tool_name: str) -> bool:
         if not self.config.tool_matchers:
             return True
-        return any(re.fullmatch(pattern, tool_name) for pattern in self.config.tool_matchers)
+        return any(
+            re.fullmatch(pattern, tool_name) for pattern in self.config.tool_matchers
+        )
 
     def _path_allowed(self, path_value: str | None) -> bool:
         if not path_value:
             return True
-        if self.config.path_globs and not any_path_matches(path_value, self.config.path_globs):
+        if self.config.path_globs and not any_path_matches(
+            path_value, self.config.path_globs
+        ):
             return False
-        if self.config.exclude_path_globs and any_path_matches(path_value, self.config.exclude_path_globs):
+        if self.config.exclude_path_globs and any_path_matches(
+            path_value, self.config.exclude_path_globs
+        ):
             return False
         return True
 
@@ -51,7 +60,9 @@ class RegexRule(Rule):
             return self.rule_id
         first_path = hits[0].path or ""
         all_paths = ", ".join(sorted({hit.path for hit in hits if hit.path}))
-        return self.config.message.format(path=first_path, matched_paths=all_paths, rule_id=self.rule_id)
+        return self.config.message.format(
+            path=first_path, matched_paths=all_paths, rule_id=self.rule_id
+        )
 
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not self.enabled or not self.supports(ctx.event_name):
@@ -91,7 +102,9 @@ class RegexRule(Rule):
             title=self.title,
             severity=Severity.from_value(self.config.severity),
             decision=None if self.config.action == "context" else self.config.action,
-            message=self._render_message(hits) if self.config.action != "context" else None,
+            message=self._render_message(hits)
+            if self.config.action != "context"
+            else None,
             additional_context=self.config.additional_context,
             metadata={
                 "target": self.config.target,

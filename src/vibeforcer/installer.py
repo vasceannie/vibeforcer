@@ -5,11 +5,14 @@ Supports:
   vibeforcer install codex     → patches ~/.codex/hooks.json
   vibeforcer install opencode  → copies TS plugin to ~/.config/opencode/plugins/
 """
+
 from __future__ import annotations
 
 import json
 import shutil
 from pathlib import Path
+
+from vibeforcer._types import ObjectDict, object_dict
 
 
 def _find_binary() -> str:
@@ -41,18 +44,20 @@ _CLAUDE_EVENTS = (
 )
 
 
-def _claude_hooks_block(binary: str) -> dict:
+_ClaudeHookCommand = dict[str, str]
+_ClaudeHookEntry = dict[str, str | list[_ClaudeHookCommand]]
+_ClaudeHooks = dict[str, list[_ClaudeHookEntry]]
+
+
+def _claude_hooks_block(binary: str) -> _ClaudeHooks:
     """Build the hooks block for Claude Code settings.json."""
-    hooks: dict[str, list] = {}
+    hooks: _ClaudeHooks = {}
     for event in _CLAUDE_EVENTS:
-        entry: dict = {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f"{binary} handle",
-                }
-            ]
+        command_entry: _ClaudeHookCommand = {
+            "type": "command",
+            "command": f"{binary} handle",
         }
+        entry: _ClaudeHookEntry = {"hooks": [command_entry]}
         if event == "SessionStart":
             entry["matcher"] = "startup|resume"
         hooks[event] = [entry]
@@ -74,7 +79,9 @@ def _install_claude(dry_run: bool = False) -> int:
     # Load existing settings or start fresh
     if settings_path.exists():
         try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            settings = object_dict(
+                json.loads(settings_path.read_text(encoding="utf-8"))
+            )
         except json.JSONDecodeError:
             settings = {}
     else:
@@ -95,7 +102,7 @@ def _uninstall_claude(dry_run: bool = False) -> int:
         print("No Claude settings found.")
         return 0
 
-    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    settings = object_dict(json.loads(settings_path.read_text(encoding="utf-8")))
     if "hooks" not in settings:
         print("No hooks found in Claude settings.")
         return 0
@@ -114,32 +121,49 @@ def _uninstall_claude(dry_run: bool = False) -> int:
 # Codex CLI
 # ---------------------------------------------------------------------------
 
-_CODEX_EVENTS = {
-    "SessionStart": {"matcher": "startup|resume", "timeout": 10, "statusMessage": "Loading vibeforcer context"},
-    "PreToolUse": {"matcher": "Bash", "timeout": 10, "statusMessage": "vibeforcer: checking command"},
-    "PostToolUse": {"matcher": "Bash", "timeout": 10, "statusMessage": "vibeforcer: reviewing output"},
+_CodeHookMeta = dict[str, str | int]
+_CodeHookCommand = dict[str, str | int]
+_CodeHookEntry = dict[str, str | list[_CodeHookCommand]]
+_CodeHooks = dict[str, list[_CodeHookEntry]]
+
+_CODEX_EVENTS: dict[str, _CodeHookMeta] = {
+    "SessionStart": {
+        "matcher": "startup|resume",
+        "timeout": 10,
+        "statusMessage": "Loading vibeforcer context",
+    },
+    "PreToolUse": {
+        "matcher": "Bash",
+        "timeout": 10,
+        "statusMessage": "vibeforcer: checking command",
+    },
+    "PostToolUse": {
+        "matcher": "Bash",
+        "timeout": 10,
+        "statusMessage": "vibeforcer: reviewing output",
+    },
     "UserPromptSubmit": {"timeout": 10},
     "Stop": {"timeout": 30},
 }
 
 
-def _codex_hooks_block(binary: str) -> dict:
-    hooks: dict[str, list] = {}
+def _codex_hooks_block(binary: str) -> _CodeHooks:
+    hooks: _CodeHooks = {}
     for event, meta in _CODEX_EVENTS.items():
-        entry: dict = {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f"{binary} handle --platform codex",
-                }
-            ]
+        command_entry: _CodeHookCommand = {
+            "type": "command",
+            "command": f"{binary} handle --platform codex",
         }
-        if "matcher" in meta:
-            entry["matcher"] = meta["matcher"]
-        if "statusMessage" in meta:
-            entry["hooks"][0]["statusMessage"] = meta["statusMessage"]
-        if "timeout" in meta:
-            entry["hooks"][0]["timeout"] = meta["timeout"]
+        entry: _CodeHookEntry = {"hooks": [command_entry]}
+        matcher = meta.get("matcher")
+        if isinstance(matcher, str):
+            entry["matcher"] = matcher
+        status_message = meta.get("statusMessage")
+        if isinstance(status_message, str):
+            command_entry["statusMessage"] = status_message
+        timeout = meta.get("timeout")
+        if isinstance(timeout, int):
+            command_entry["timeout"] = timeout
         hooks[event] = [entry]
     return hooks
 
@@ -159,7 +183,7 @@ def _install_codex(dry_run: bool = False) -> int:
 
     if hooks_path.exists():
         try:
-            existing = json.loads(hooks_path.read_text(encoding="utf-8"))
+            existing = object_dict(json.loads(hooks_path.read_text(encoding="utf-8")))
         except json.JSONDecodeError:
             existing = {}
     else:
@@ -172,15 +196,15 @@ def _install_codex(dry_run: bool = False) -> int:
     config_path = Path.home() / ".codex" / "config.json"
     if config_path.exists():
         try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config = object_dict(json.loads(config_path.read_text(encoding="utf-8")))
         except json.JSONDecodeError:
             config = {}
     else:
         config = {}
 
-    if "features" not in config:
-        config["features"] = {}
-    config["features"]["hooks"] = True
+    features = object_dict(config.get("features"))
+    features["hooks"] = True
+    config["features"] = features
     config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     print(f"Installed vibeforcer hooks into {hooks_path}")

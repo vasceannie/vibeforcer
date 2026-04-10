@@ -5,11 +5,13 @@ ERRORS-FAIL-001: PostToolUseFailure Bash — catches non-zero exit commands
 
 Both inject context telling Claude to fix errors instead of dismissing them.
 """
+
 from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
 
+from vibeforcer._types import object_dict, string_value
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule
 
@@ -22,15 +24,50 @@ if TYPE_CHECKING:
 # Commands whose output should NEVER trigger error detection
 # (read-only / informational — output naturally contains "error" as data)
 _READ_ONLY_PREFIXES = (
-    "grep ", "grep\t", "egrep ", "fgrep ", "rg ", "ag ", "ack ",
-    "cat ", "head ", "tail ", "less ", "more ", "bat ",
-    "ls ", "ls\t", "ll ", "dir ", "tree ", "du ", "df ", "wc ",
-    "find ", "locate ", "fd ",
-    "git log", "git show", "git diff", "git status", "git blame",
-    "git branch", "git tag", "git remote", "git stash list",
-    "which ", "whereis ", "type ", "file ", "stat ",
-    "echo ", "printf ", "env", "printenv",
-    "man ", "help ",
+    "grep ",
+    "grep\t",
+    "egrep ",
+    "fgrep ",
+    "rg ",
+    "ag ",
+    "ack ",
+    "cat ",
+    "head ",
+    "tail ",
+    "less ",
+    "more ",
+    "bat ",
+    "ls ",
+    "ls\t",
+    "ll ",
+    "dir ",
+    "tree ",
+    "du ",
+    "df ",
+    "wc ",
+    "find ",
+    "locate ",
+    "fd ",
+    "git log",
+    "git show",
+    "git diff",
+    "git status",
+    "git blame",
+    "git branch",
+    "git tag",
+    "git remote",
+    "git stash list",
+    "which ",
+    "whereis ",
+    "type ",
+    "file ",
+    "stat ",
+    "echo ",
+    "printf ",
+    "env",
+    "printenv",
+    "man ",
+    "help ",
     "pwd",
 )
 
@@ -109,7 +146,10 @@ _ERROR_PATTERNS = [
     re.compile(r"compilation\s+error", re.IGNORECASE),
     # Python tracebacks
     re.compile(r"Traceback \(most recent call last\)"),
-    re.compile(r"(?:SyntaxError|TypeError|NameError|ValueError|AttributeError|ImportError|KeyError|IndexError|RuntimeError|AssertionError|FileNotFoundError|ModuleNotFoundError|OSError|PermissionError):", re.MULTILINE),
+    re.compile(
+        r"(?:SyntaxError|TypeError|NameError|ValueError|AttributeError|ImportError|KeyError|IndexError|RuntimeError|AssertionError|FileNotFoundError|ModuleNotFoundError|OSError|PermissionError):",
+        re.MULTILINE,
+    ),
     # Lint / type-check
     re.compile(r"Found\s+\d+\s+error", re.IGNORECASE),
     re.compile(r"error\[E\d+\]", re.IGNORECASE),  # Rust compiler
@@ -121,7 +161,9 @@ _FALSE_POSITIVE_PATTERNS = [
     # "X passed" with no failures
     re.compile(r"^\s*\d+\s+passed(?:\s+in\s+[\d.]+s)?\s*$", re.MULTILINE),
     # Deprecation/pip warnings are not actionable errors
-    re.compile(r"DEPRECATION:|DeprecationWarning|PendingDeprecationWarning", re.IGNORECASE),
+    re.compile(
+        r"DEPRECATION:|DeprecationWarning|PendingDeprecationWarning", re.IGNORECASE
+    ),
     # Docker build warnings (non-fatal)
     re.compile(r"\d+\s+warnings?\s+found\s+\(use\s+docker", re.IGNORECASE),
     # "Successfully" anything
@@ -180,12 +222,14 @@ _FAILURE_CONTEXT = (
 
 # ── Rules ───────────────────────────────────────────────────────────────
 
+
 class BashOutputErrorRule(Rule):
     """Detect errors in Bash output even when exit code is 0.
 
     PostToolUse fires for exit-0 commands. Some tools (ruff --exit-zero,
     eslint --max-warnings, etc.) exit 0 despite reporting errors.
     """
+
     rule_id = "ERRORS-BASH-001"
     title = "Bash output error interceptor"
     events = ("PostToolUse",)
@@ -208,12 +252,12 @@ class BashOutputErrorRule(Rule):
             return []
 
         # Get stdout from tool_response
-        tool_response = ctx.payload.payload.get("tool_response")
-        if not isinstance(tool_response, dict):
+        tool_response = object_dict(ctx.payload.payload.get("tool_response"))
+        if not tool_response:
             return []
 
-        stdout = tool_response.get("stdout", "")
-        stderr = tool_response.get("stderr", "")
+        stdout = string_value(tool_response.get("stdout")) or ""
+        stderr = string_value(tool_response.get("stderr")) or ""
         output = f"{stdout}\n{stderr}".strip()
 
         if not output:
@@ -239,6 +283,7 @@ class BashFailureReinforcementRule(Rule):
     PostToolUseFailure fires for ANY non-zero exit. We filter out
     commands where non-zero exit is normal (grep, diff, test, etc.).
     """
+
     rule_id = "ERRORS-FAIL-001"
     title = "Bash failure reinforcement"
     events = ("PostToolUseFailure",)

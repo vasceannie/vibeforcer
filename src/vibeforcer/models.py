@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Any
-
 from .policy_defaults import RUNTIME_POLICY_DEFAULTS
+from ._types import ObjectDict
 
 
 class Severity(IntEnum):
@@ -38,8 +37,8 @@ class RuleFinding:
     decision: str | None = None
     message: str | None = None
     additional_context: str | None = None
-    updated_input: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    updated_input: ObjectDict = field(default_factory=dict)
+    metadata: ObjectDict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -116,5 +115,5 @@ class RuntimeConfig:
 class EngineResult:
     event_name: str
     findings: list[RuleFinding] = field(default_factory=list)
-    output: dict[str, Any] | None = None
+    output: ObjectDict | None = None
     errors: list[str] = field(default_factory=list)

@@ -67,7 +67,7 @@ class QualityConfig:
     deprecated_patterns: list[tuple[str, str]]
 
 
-_CONFIG: QualityConfig | None = None
+_config_instance: QualityConfig | None = None
 
 
 class _QualityConfigValues(TypedDict):
@@ -119,7 +119,7 @@ class _QualityConfigValues(TypedDict):
 
 def _build_default_config(root: Path) -> QualityConfig:
     values = build_default_values(root)
-    typed_values = cast(_QualityConfigValues, values)
+    typed_values = cast(_QualityConfigValues, cast(object, values))
     return QualityConfig(**typed_values)
 
 
@@ -134,21 +134,21 @@ def load_config(project_root: Path) -> QualityConfig:
 def get_config() -> QualityConfig:
     """Return global lint config, loading cwd defaults if needed."""
 
-    global _CONFIG
-    if _CONFIG is None:
+    global _config_instance
+    if _config_instance is None:
         return load_config(Path.cwd())
-    return _CONFIG
+    return _config_instance
 
 
 def set_config(config: QualityConfig) -> None:
     """Set global lint config instance."""
 
-    global _CONFIG
-    _CONFIG = config
+    global _config_instance
+    _config_instance = config
 
 
 def reset_config() -> None:
     """Clear global lint config singleton."""
 
-    global _CONFIG
-    _CONFIG = None
+    global _config_instance
+    _config_instance = None

@@ -11,9 +11,9 @@ import ast
 import copy
 import hashlib
 from collections import defaultdict
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Set
 from pathlib import Path
-from typing import TypeGuard, TypeVar, cast
+from typing import TypeGuard, TypeVar
 
 from vibeforcer.lint._baseline import Violation
 from vibeforcer.lint._config import get_config
@@ -76,21 +76,28 @@ class _Normalizer(ast.NodeTransformer):
     def visit_arg(self, node: ast.arg) -> ast.arg:
         node.arg = self._positional_id(node.arg)
         node.annotation = None
-        return self.generic_visit(node)  # pyright: ignore[reportReturnType]
+        visited = self.generic_visit(node)
+        if not isinstance(visited, ast.arg):
+            raise TypeError("expected ast.arg from generic_visit")
+        return visited
 
-    def _visit_funcdef(
-        self, node: ast.FunctionDef | ast.AsyncFunctionDef,
-    ) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         node.name = self._positional_id(node.name)
         node.returns = None
         node.decorator_list = []
-        return self.generic_visit(node)  # pyright: ignore[reportReturnType]
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
-        return self._visit_funcdef(node)  # pyright: ignore[reportReturnType]
+        visited = self.generic_visit(node)
+        if not isinstance(visited, ast.FunctionDef):
+            raise TypeError("expected ast.FunctionDef from generic_visit")
+        return visited
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
-        return self._visit_funcdef(node)  # pyright: ignore[reportReturnType]
+        node.name = self._positional_id(node.name)
+        node.returns = None
+        node.decorator_list = []
+        visited = self.generic_visit(node)
+        if not isinstance(visited, ast.AsyncFunctionDef):
+            raise TypeError("expected ast.AsyncFunctionDef from generic_visit")
+        return visited
 
 
 def _normalize_ast(node: ast.AST) -> str:
@@ -204,7 +211,7 @@ def detect_semantic_clones(
     """Find functions with identical AST structure despite different names."""
     cfg = get_config()
     min_lines = cfg.min_function_body_lines
-    parsed = ensure_parsed(cast(list[object] | None, files), fallback=find_source_files())
+    parsed = ensure_parsed(files, fallback=find_source_files())
 
     groups: dict[str, list[tuple[str, str, int]]] = defaultdict(list)
     for pf in parsed:
@@ -227,7 +234,7 @@ def detect_semantic_clones(
 
 def _collect_literals(
     parsed: list[ParsedFile],
-    allowed_nums: set[int | float],
+    allowed_nums: Set[int | float],
     allowed_strs: set[str],
 ) -> tuple[dict[int | float, set[str]], dict[str, set[str]]]:
     """Walk ASTs and count non-allowed literal occurrences per file."""
@@ -254,7 +261,7 @@ def detect_repeated_literals(
 ) -> list[Violation]:
     """Flag magic numbers and string literals used excessively."""
     cfg = get_config()
-    parsed = ensure_parsed(cast(list[object] | None, files), fallback=find_source_files())
+    parsed = ensure_parsed(files, fallback=find_source_files())
     num_counts, str_counts = _collect_literals(parsed, cfg.allowed_numbers, cfg.allowed_strings)
 
     violations: list[Violation] = []
@@ -310,7 +317,7 @@ def detect_repeated_blocks(
     files: list[Path] | list[ParsedFile] | None = None,
 ) -> list[Violation]:
     """Find blocks of consecutive statements that appear in multiple places."""
-    parsed = ensure_parsed(cast(list[object] | None, files), fallback=find_source_files())
+    parsed = ensure_parsed(files, fallback=find_source_files())
     groups = _collect_block_windows(parsed)
 
     violations: list[Violation] = []
@@ -352,7 +359,7 @@ def detect_duplicate_call_sequences(
     """Find functions that make the same ordered sequence of calls."""
     cfg = get_config()
     min_len = cfg.min_call_sequence_length
-    parsed = ensure_parsed(cast(list[object] | None, files), fallback=find_source_files())
+    parsed = ensure_parsed(files, fallback=find_source_files())
 
     groups: dict[tuple[str, ...], list[tuple[str, str, int]]] = defaultdict(list)
     for pf in parsed:

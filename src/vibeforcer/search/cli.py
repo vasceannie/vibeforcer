@@ -10,6 +10,8 @@ import urllib.error
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+SearchSubparsersAction = argparse._SubParsersAction[argparse.ArgumentParser]
+
 from vibeforcer.search.completions import print_completion
 from vibeforcer.search.config import (
     APP_CONFIG,
@@ -551,7 +553,7 @@ def _probe_doctor_endpoint(cfg: dict) -> int:
 
 
 def build_search_parser(
-    subparsers: argparse._SubParsersAction | None = None,
+    subparsers: SearchSubparsersAction | None = None,
 ) -> argparse.ArgumentParser:
     """Build the ``search`` subcommand parser.
 
@@ -570,7 +572,7 @@ def build_search_parser(
 
 
 def _create_search_root(
-    subparsers: argparse._SubParsersAction | None,
+    subparsers: SearchSubparsersAction | None,
 ) -> argparse.ArgumentParser:
     """Create the root parser for search commands."""
     if subparsers is not None:
@@ -588,7 +590,7 @@ def _create_search_root(
 
 
 def _register_all_subcommands(
-    sub: argparse._SubParsersAction,
+    sub: SearchSubparsersAction,
 ) -> None:
     """Register every search subcommand on *sub*."""
     _add_init_parser(sub)
@@ -604,7 +606,7 @@ def _register_all_subcommands(
     _add_completions_parser(sub)
 
 
-def _add_init_parser(sub: argparse._SubParsersAction) -> None:
+def _add_init_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("init", help="write wrapper and islands configs")
     p.add_argument("--provider", choices=["litellm", "ollama"])
     p.add_argument("--base-url")
@@ -629,21 +631,19 @@ def _add_init_parser(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(func=cmd_init)
 
 
-def _add_doctor_parser(sub: argparse._SubParsersAction) -> None:
+def _add_doctor_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("doctor", help="check runtime config and endpoint")
     p.set_defaults(func=cmd_doctor)
 
 
-def _add_models_parser(
-    sub: argparse._SubParsersAction[argparse.ArgumentParser],
-) -> None:
+def _add_models_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("models", help="list available embedding models")
     p.set_defaults(func=cmd_models)
     for option in ("--all", "--json"):
         p.add_argument(option, action="store_true")
 
 
-def _add_use_parser(sub: argparse._SubParsersAction) -> None:
+def _add_use_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("use", help="set default model for this repo")
     p.add_argument("model")
     p.add_argument("--force", action="store_true")
@@ -654,13 +654,13 @@ def _add_list_json_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true")
 
 
-def _add_list_parser(sub: argparse._SubParsersAction) -> None:
+def _add_list_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("list", help="list locally known indexes")
     p.set_defaults(func=cmd_list)
     _add_list_json_argument(p)
 
 
-def _add_add_parser(sub: argparse._SubParsersAction) -> None:
+def _add_add_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("add", help="index a repository URL")
     p.add_argument("repo")
     p.add_argument("--token")
@@ -668,13 +668,13 @@ def _add_add_parser(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(func=cmd_add)
 
 
-def _add_query_parser(sub: argparse._SubParsersAction) -> None:
+def _add_query_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("query", help="search indexed repositories")
     p.add_argument("query", nargs=argparse.REMAINDER)
     p.set_defaults(func=cmd_search)
 
 
-def _add_remove_parser(sub: argparse._SubParsersAction) -> None:
+def _add_remove_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("remove", help="remove an index")
     p.set_defaults(func=cmd_remove)
     p.add_argument("target")
@@ -685,7 +685,7 @@ def _add_sync_targets_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("targets", nargs="*")
 
 
-def _add_sync_parser(sub: argparse._SubParsersAction) -> None:
+def _add_sync_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("sync", help="sync indexes with upstream")
     p.set_defaults(func=cmd_sync)
     _add_sync_targets_argument(p)
@@ -695,7 +695,7 @@ def _add_reindex_target_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("target")
 
 
-def _add_reindex_parser(sub: argparse._SubParsersAction) -> None:
+def _add_reindex_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("reindex", help="remove and rebuild an index")
     p.set_defaults(func=cmd_reindex)
     _add_reindex_target_argument(p)
@@ -705,7 +705,7 @@ def _add_completions_shell_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("shell", choices=["bash", "zsh"])
 
 
-def _add_completions_parser(sub: argparse._SubParsersAction) -> None:
+def _add_completions_parser(sub: SearchSubparsersAction) -> None:
     p = sub.add_parser("completions", help="print shell completions")
     p.set_defaults(func=cmd_completions)
     _add_completions_shell_argument(p)
