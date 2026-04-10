@@ -1,0 +1,35 @@
+wing: vibeforcer
+rooms:
+- name: testing
+  description: Files from tests/
+  keywords:
+  - testing
+  - tests
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: src
+  description: Files from src/
+  keywords:
+  - src
+  - src
+- name: dashboard
+  description: Files from dashboard/
+  keywords:
+  - dashboard
+  - dashboard
+- name: fixtures
+  description: Files from fixtures/
+  keywords:
+  - fixtures
+  - fixtures
+- name: scripts
+  description: Files from scripts/
+  keywords:
+  - scripts
+  - scripts
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []
