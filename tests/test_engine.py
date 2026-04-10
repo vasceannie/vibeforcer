@@ -730,6 +730,41 @@ def test_disabled_rule_does_not_fire(load_fixture, fixture_name, rule_id):
 
 
 # ===========================================================================
+# Rule-loading resilience
+# ===========================================================================
+
+
+def test_build_rules_survives_python_ast_import_error(load_fixture, monkeypatch):
+    from vibeforcer.config import load_config
+    from vibeforcer.context import HookContext
+    import vibeforcer.rules as rules_mod
+    from vibeforcer.trace import TraceWriter
+    from vibeforcer.util.payloads import HookPayload
+
+    payload = load_fixture("pretool_git_no_verify.json")
+    config = load_config()
+    trace = TraceWriter(config.trace_dir)
+    ctx = HookContext(payload=HookPayload(payload, config), config=config, trace=trace)
+
+    healthy_ids = {rule.rule_id for rule in rules_mod.build_rules(ctx)}
+    assert "PY-CODE-008" in healthy_ids
+    assert "PY-IMPORT-001" in healthy_ids
+
+    monkeypatch.setattr(
+        rules_mod,
+        "_PYTHON_AST_IMPORT_ERROR",
+        SyntaxError("synthetic import failure"),
+        raising=False,
+    )
+    monkeypatch.setattr(rules_mod, "_PYTHON_AST_IMPORT_REPORTED", False, raising=False)
+
+    fallback_ids = {rule.rule_id for rule in rules_mod.build_rules(ctx)}
+    assert "GIT-001" in fallback_ids
+    assert "PY-CODE-008" not in fallback_ids
+    assert "PY-IMPORT-001" not in fallback_ids
+
+
+# ===========================================================================
 # Robustness
 # ===========================================================================
 

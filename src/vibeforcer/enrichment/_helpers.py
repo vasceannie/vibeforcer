@@ -17,6 +17,9 @@ if TYPE_CHECKING:
     from vibeforcer.models import RuleFinding
 
 
+_ast_parse_count = 0
+
+
 def _append_enrichment_message(finding: "RuleFinding", lines: list[str]) -> None:
     """Append enrichment lines to a finding message."""
     if not lines:
@@ -44,10 +47,23 @@ def _safe_read(path: Path, max_bytes: int = ENRICHMENT_MAX_READ_BYTES) -> str:
 
 def _safe_parse(source: str) -> ast.Module | None:
     """Parse Python source, returning ``None`` on syntax errors."""
+    global _ast_parse_count
+    _ast_parse_count += 1
     try:
         return ast.parse(source)
     except SyntaxError:
         return None
+
+
+def _reset_parse_count() -> None:
+    """Reset the package-level AST parse counter."""
+    global _ast_parse_count
+    _ast_parse_count = 0
+
+
+def _get_parse_count() -> int:
+    """Return the number of ``_safe_parse`` calls since the last reset."""
+    return _ast_parse_count
 
 
 def _resolve_path(path_str: str, root: Path) -> Path:

@@ -140,6 +140,11 @@ def _load_json(path: Path) -> dict[str, object]:
     except FileNotFoundError:
         return {}
     except json.JSONDecodeError as exc:
+        warning(
+            "quality gate JSON load failed",
+            path=str(path),
+            error=str(exc),
+        )
         raise RuntimeError(f"Invalid JSON in {path}: {exc}") from exc
 
 
@@ -155,8 +160,8 @@ def is_repo_disabled(repo_root: Path | None = None) -> bool:
             return True
 
     toml_data = _load_toml(repo_root)
-    qg_section = toml_data.get("quality_gate", {})
-    if isinstance(qg_section, dict) and qg_section.get("enabled") is False:
+    qg_section = _object_dict(toml_data.get("quality_gate", {}))
+    if _bool_value(qg_section.get("enabled"), True) is False:
         return True
 
     return False
@@ -177,6 +182,30 @@ def _object_dict(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}
     return {str(key): item for key, item in value.items()}
+
+
+def _string_value(value: object, default: str = "") -> str:
+    return default if value is None else str(value)
+
+
+def _bool_value(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _int_value(value: object, default: int) -> int:
+    if value is None:
+        return default
+    return int(str(value))
+
+
+def _float_value(value: object, default: float) -> float:
+    if value is None:
+        return default
+    return float(str(value))
 
 
 def _string_list(value: object) -> list[str]:
@@ -216,7 +245,29 @@ def _regex_rule_configs(value: object) -> list[RegexRuleConfig]:
     regex_rules: list[RegexRuleConfig] = []
     for item in value:
         if isinstance(item, dict):
-            regex_rules.append(RegexRuleConfig(**_object_dict(item)))
+            data = _object_dict(item)
+            regex_rules.append(
+                RegexRuleConfig(
+                    rule_id=_string_value(data.get("rule_id")),
+                    title=_string_value(data.get("title")),
+                    severity=_string_value(data.get("severity"), "MEDIUM"),
+                    events=_string_list(data.get("events")) or ["PreToolUse"],
+                    target=_string_value(data.get("target"), "content"),
+                    action=_string_value(data.get("action"), "deny"),
+                    message=_string_value(data.get("message")),
+                    additional_context=(
+                        _string_value(data.get("additional_context"))
+                        if data.get("additional_context") is not None
+                        else None
+                    ),
+                    patterns=_string_list(data.get("patterns")),
+                    path_globs=_string_list(data.get("path_globs")),
+                    exclude_path_globs=_string_list(data.get("exclude_path_globs")),
+                    tool_matchers=_string_list(data.get("tool_matchers")),
+                    case_sensitive=_bool_value(data.get("case_sensitive"), False),
+                    multiline=_bool_value(data.get("multiline"), True),
+                )
+            )
     return regex_rules
 
 
@@ -253,82 +304,74 @@ def _merge_config(
         root=actual_root,
         trace_dir=trace_dir,
         prompt_context_files=prompt_context_files,
-        search_reminder_message=str(raw.get("search_reminder_message", "")).strip(),
+        search_reminder_message=_string_value(
+            raw.get("search_reminder_message")
+        ).strip(),
         protected_paths=_string_list(raw.get("protected_paths", [])),
         sensitive_path_patterns=_string_list(raw.get("sensitive_path_patterns", [])),
         system_path_prefixes=_string_list(raw.get("system_path_prefixes", [])),
-        python_ast_enabled=bool(python_ast.get("enabled", True)),
-        python_ast_max_parse_chars=int(
-            python_ast.get(
-                "max_parse_chars", RUNTIME_POLICY_DEFAULTS["max_parse_chars"]
-            )
+        python_ast_enabled=_bool_value(python_ast.get("enabled"), True),
+        python_ast_max_parse_chars=_int_value(
+            python_ast.get("max_parse_chars"),
+            int(RUNTIME_POLICY_DEFAULTS["max_parse_chars"]),
         ),
-        python_long_method_lines=int(
+        python_long_method_lines=_int_value(
             toml_thresholds.get(
                 "max_method_lines",
                 python_ast.get(
                     "long_method_lines",
                     RUNTIME_POLICY_DEFAULTS["long_method_lines"],
                 ),
-            )
+            ),
+            int(RUNTIME_POLICY_DEFAULTS["long_method_lines"]),
         ),
-        python_long_parameter_limit=int(
+        python_long_parameter_limit=_int_value(
             toml_thresholds.get(
                 "max_params",
                 python_ast.get(
                     "long_parameter_limit",
                     RUNTIME_POLICY_DEFAULTS["long_parameter_limit"],
                 ),
-            )
+            ),
+            int(RUNTIME_POLICY_DEFAULTS["long_parameter_limit"]),
         ),
-        post_edit_quality_enabled=bool(post_edit_quality.get("enabled", False)),
-        post_edit_quality_block_on_failure=bool(
-            post_edit_quality.get("block_on_failure", True)
+        post_edit_quality_enabled=_bool_value(post_edit_quality.get("enabled"), False),
+        post_edit_quality_block_on_failure=_bool_value(
+            post_edit_quality.get("block_on_failure"),
+            True,
         ),
         post_edit_quality_commands=_command_map(
             post_edit_quality.get("commands_by_language", {})
         ),
-        async_jobs_enabled=bool(async_jobs.get("enabled", False)),
+        async_jobs_enabled=_bool_value(async_jobs.get("enabled"), False),
         async_jobs_commands=_command_map(async_jobs.get("commands_by_language", {})),
-        python_max_complexity=int(
-            toml_thresholds.get(
-                "max_complexity", RUNTIME_POLICY_DEFAULTS["max_complexity"]
-            )
+        python_max_complexity=_int_value(
+            toml_thresholds.get("max_complexity"),
+            int(RUNTIME_POLICY_DEFAULTS["max_complexity"]),
         ),
-        python_max_nesting_depth=int(
-            toml_thresholds.get(
-                "max_nesting_depth",
-                RUNTIME_POLICY_DEFAULTS["max_nesting_depth"],
-            )
+        python_max_nesting_depth=_int_value(
+            toml_thresholds.get("max_nesting_depth"),
+            int(RUNTIME_POLICY_DEFAULTS["max_nesting_depth"]),
         ),
-        python_max_god_class_methods=int(
-            toml_thresholds.get(
-                "max_god_class_methods",
-                RUNTIME_POLICY_DEFAULTS["max_god_class_methods"],
-            )
+        python_max_god_class_methods=_int_value(
+            toml_thresholds.get("max_god_class_methods"),
+            int(RUNTIME_POLICY_DEFAULTS["max_god_class_methods"]),
         ),
-        python_max_line_length=int(
-            toml_thresholds.get(
-                "max_line_length", RUNTIME_POLICY_DEFAULTS["max_line_length"]
-            )
+        python_max_line_length=_int_value(
+            toml_thresholds.get("max_line_length"),
+            int(RUNTIME_POLICY_DEFAULTS["max_line_length"]),
         ),
-        python_feature_envy_threshold=float(
-            toml_thresholds.get(
-                "feature_envy_threshold",
-                RUNTIME_POLICY_DEFAULTS["feature_envy_threshold"],
-            )
+        python_feature_envy_threshold=_float_value(
+            toml_thresholds.get("feature_envy_threshold"),
+            float(RUNTIME_POLICY_DEFAULTS["feature_envy_threshold"]),
         ),
-        python_feature_envy_min_accesses=int(
-            toml_thresholds.get(
-                "feature_envy_min_accesses",
-                RUNTIME_POLICY_DEFAULTS["feature_envy_min_accesses"],
-            )
+        python_feature_envy_min_accesses=_int_value(
+            toml_thresholds.get("feature_envy_min_accesses"),
+            int(RUNTIME_POLICY_DEFAULTS["feature_envy_min_accesses"]),
         ),
-        python_import_fanout_limit=int(
-            toml_thresholds.get(
-                "import_fanout_limit",
-                RUNTIME_POLICY_DEFAULTS["import_fanout_limit"],
-            )
+        python_import_fanout_limit=_int_value(
+            toml_thresholds.get("import_fanout_limit"),
+            int(RUNTIME_POLICY_DEFAULTS["import_fanout_limit"]),
         ),
         skip_paths=skip_paths,
         skip_if_file_exists=skip_if_file_exists,

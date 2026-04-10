@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vibeforcer.cli import build_parser
+from vibeforcer.cli.cli import build_parser
 
 
 def test_lint_check_defaults_to_current_directory() -> None:

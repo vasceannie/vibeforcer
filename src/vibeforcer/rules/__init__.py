@@ -12,19 +12,23 @@ from vibeforcer.rules.common import (
     SensitiveDataRule,
     SystemProtectionRule,
 )
-from vibeforcer.rules.python_ast import (
-    PythonCyclomaticComplexityRule,
-    PythonDeadCodeRule,
-    PythonDeepNestingRule,
-    PythonFeatureEnvyRule,
-    PythonGodClassRule,
-    PythonLongLineRule,
-    PythonLongMethodRule,
-    PythonLongParameterRule,
-    PythonThinWrapperRule,
-    PythonFlatFileSiblingsRule,
-    PythonImportFanoutRule,
-)
+try:
+    from vibeforcer.rules.python_ast import (
+        PythonCyclomaticComplexityRule,
+        PythonDeadCodeRule,
+        PythonDeepNestingRule,
+        PythonFeatureEnvyRule,
+        PythonGodClassRule,
+        PythonLongLineRule,
+        PythonLongMethodRule,
+        PythonLongParameterRule,
+        PythonThinWrapperRule,
+        PythonFlatFileSiblingsRule,
+        PythonImportFanoutRule,
+    )
+    _PYTHON_AST_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - exercised in import-failure test
+    _PYTHON_AST_IMPORT_ERROR = exc
 from vibeforcer.rules.regex_rule import RegexRule
 from vibeforcer.rules.langgraph import (
     LangGraphDeprecatedAPIRule,
@@ -47,16 +51,32 @@ from vibeforcer.rules.stop_rules import (
 )
 
 
-def build_rules(ctx: HookContext) -> list[Rule]:
-    rules: list[Rule] = [
-        PromptContextRule(),
-        FullFileReadRule(),
-        ProtectedPathsRule(),
-        SensitiveDataRule(),
-        SystemProtectionRule(),
-        GitNoVerifyRule(),
-        SearchReminderRule(),
-        PostEditQualityRule(),
+_PYTHON_AST_IMPORT_REPORTED = False
+
+
+def _build_python_ast_rules(ctx: HookContext) -> list[Rule]:
+    global _PYTHON_AST_IMPORT_REPORTED
+
+    if _PYTHON_AST_IMPORT_ERROR is not None:
+        if not _PYTHON_AST_IMPORT_REPORTED:
+            _PYTHON_AST_IMPORT_REPORTED = True
+            ctx.trace.rule(
+                {
+                    "platform": "any",
+                    "event_name": ctx.event_name,
+                    "session_id": ctx.session_id,
+                    "tool_name": ctx.tool_name,
+                    "rule_id": "PY-AST-IMPORT-001",
+                    "severity": "high",
+                    "decision": None,
+                    "message": "Python AST rules disabled due to import error",
+                    "additional_context": repr(_PYTHON_AST_IMPORT_ERROR),
+                    "metadata": {"kind": "import_error"},
+                }
+            )
+        return []
+
+    return [
         PythonLongMethodRule(),
         PythonLongParameterRule(),
         PythonLongLineRule(),
@@ -68,6 +88,19 @@ def build_rules(ctx: HookContext) -> list[Rule]:
         PythonDeadCodeRule(),
         PythonFlatFileSiblingsRule(),
         PythonImportFanoutRule(),
+    ]
+
+
+def build_rules(ctx: HookContext) -> list[Rule]:
+    rules: list[Rule] = [
+        PromptContextRule(),
+        FullFileReadRule(),
+        ProtectedPathsRule(),
+        SensitiveDataRule(),
+        SystemProtectionRule(),
+        GitNoVerifyRule(),
+        SearchReminderRule(),
+        PostEditQualityRule(),
         BaselineGuardRule(),
         IgnorePreexistingRule(),
         RequireQualityCheckRule(),
@@ -82,6 +115,7 @@ def build_rules(ctx: HookContext) -> list[Rule]:
         LangGraphStateMutationRule(),
         LangGraphDeprecatedAPIRule(),
     ]
+    rules.extend(_build_python_ast_rules(ctx))
     rules.extend(
         RegexRule(
             config=regex_rule,
