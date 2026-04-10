@@ -3,45 +3,41 @@
 from __future__ import annotations
 
 from vibeforcer.cli.cli import build_parser
+from vibeforcer._types import object_dict, string_value
+
+
+def _parse_lint(argv: list[str]) -> tuple[str, str | None]:
+    parsed = build_parser().parse_args(argv)
+    values = object_dict(vars(parsed))
+    lint_command = string_value(values.get("lint_command"))
+    path = string_value(values.get("path"))
+    assert lint_command is not None, f"Expected lint_command in parsed args: {values}"
+    return lint_command, path
 
 
 def test_lint_check_defaults_to_current_directory() -> None:
-    parser = build_parser()
-    parsed = parser.parse_args(["lint", "check", "."])
-
-    assert (parsed.lint_command, parsed.path) == ("check", ".")
+    assert _parse_lint(["lint", "check", "."]) == ("check", ".")
 
 
 def test_lint_init_respects_explicit_path() -> None:
-    parser = build_parser()
-    parsed = parser.parse_args(["lint", "init", "/tmp/example"])
-
-    assert (parsed.lint_command, parsed.path) == ("init", "/tmp/example")
+    assert _parse_lint(["lint", "init", "/tmp/example"]) == ("init", "/tmp/example")
 
 
 def test_lint_baseline_respects_explicit_path() -> None:
-    parser = build_parser()
-    parsed = parser.parse_args(["lint", "baseline", "/tmp/example"])
-
-    assert (parsed.lint_command, parsed.path) == ("baseline", "/tmp/example")
+    assert _parse_lint(["lint", "baseline", "/tmp/example"]) == (
+        "baseline",
+        "/tmp/example",
+    )
 
 
 def test_lint_update_respects_explicit_path() -> None:
-    parser = build_parser()
-    parsed = parser.parse_args(["lint", "update", "/tmp/example"])
-
-    assert (parsed.lint_command, parsed.path) == ("update", "/tmp/example")
+    assert _parse_lint(["lint", "update", "/tmp/example"]) == ("update", "/tmp/example")
 
 
 def test_lint_check_respects_explicit_path() -> None:
-    parser = build_parser()
-    parsed = parser.parse_args(["lint", "check", "/tmp/example"])
-
-    assert (parsed.lint_command, parsed.path) == ("check", "/tmp/example")
+    assert _parse_lint(["lint", "check", "/tmp/example"]) == ("check", "/tmp/example")
 
 
 def test_lint_no_subcommand_defaults_to_check() -> None:
-    parser = build_parser()
-    parsed = parser.parse_args(["lint"])
-
-    assert parsed.lint_command == "check"
+    lint_command, _path = _parse_lint(["lint"])
+    assert lint_command == "check"

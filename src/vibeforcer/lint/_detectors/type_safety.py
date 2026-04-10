@@ -17,7 +17,6 @@ from vibeforcer.lint._helpers import (
     ParsedFile,
     ensure_parsed,
     find_source_files,
-    relative_path,
 )
 
 

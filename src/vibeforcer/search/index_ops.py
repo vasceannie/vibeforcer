@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 from vibeforcer._types import ObjectDict, object_dict, string_value
 from vibeforcer.search.config import (
@@ -28,7 +29,8 @@ def local_indexes(_cfg: SearchConfig) -> list[ObjectDict]:
     items: list[ObjectDict] = []
     for path in indexes_root.glob("*/*/*/metadata.json"):
         try:
-            data = object_dict(json.loads(path.read_text()))
+            raw_data = cast(object, json.loads(path.read_text()))
+            data = object_dict(raw_data)
         except Exception:
             continue
         items.append(data)
@@ -70,14 +72,18 @@ def resolve_reindex_target(
         repo_root = get_git_repo_root(cwd)
         if not repo_root:
             raise IsxError(
-                "could not resolve '.': not inside a git working tree. "
-                "Pass a repo URL or index name instead."
+                (
+                    "could not resolve '.': not inside a git working tree. "
+                    "Pass a repo URL or index name instead."
+                )
             )
         clone_url = get_git_remote_url(repo_root)
         if not clone_url:
             raise IsxError(
-                f"git repo at {repo_root} has no 'origin' remote. "
-                "Pass the clone URL explicitly."
+                (
+                    f"git repo at {repo_root} has no 'origin' remote. "
+                    "Pass the clone URL explicitly."
+                )
             )
         for item in local_indexes(cfg):
             repo = object_dict(item.get("repository"))

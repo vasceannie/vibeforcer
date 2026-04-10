@@ -96,13 +96,14 @@ def _is_large_file(path_str: str, threshold: int) -> bool:
 
 
 class FullFileReadRule(Rule):
-    rule_id = "BUILTIN-ENFORCE-FULL-READ"
-    title = "Enforce full file read"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "BUILTIN-ENFORCE-FULL-READ"
+    title: str = "Enforce full file read"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
-    EXEMPT_SUFFIXES = (".md", ".json", ".yaml", ".yml", ".txt", ".log", ".csv")
-    LARGE_FILE_BYTES = 40_000
+    EXEMPT_SUFFIXES: tuple[str, ...] = (".md", ".json", ".yaml", ".yml", ".txt", ".log", ".csv")
+    LARGE_FILE_BYTES: int = 40_000
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id):
             return []
@@ -221,11 +222,11 @@ def _compile_sensitive_patterns(raw: list[str]) -> list[re.Pattern[str]]:
 
 
 class SensitiveDataRule(Rule):
-    rule_id = "GLOBAL-BUILTIN-SENSITIVE-DATA"
-    title = "Sensitive data protection"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "GLOBAL-BUILTIN-SENSITIVE-DATA"
+    title: str = "Sensitive data protection"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
-    SAFE_SUFFIXES = (
+    SAFE_SUFFIXES: tuple[str, ...] = (
         ".example",
         ".sample",
         ".template",
@@ -278,6 +279,7 @@ class SensitiveDataRule(Rule):
                     return "[command]"
         return None
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id):
             return []
@@ -327,10 +329,11 @@ def _match_system_command(command: str, prefixes: list[str]) -> str | None:
 
 
 class SystemProtectionRule(Rule):
-    rule_id = "GLOBAL-BUILTIN-SYSTEM-PROTECTION"
-    title = "System path protection"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "GLOBAL-BUILTIN-SYSTEM-PROTECTION"
+    title: str = "System path protection"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id):
             return []
@@ -369,10 +372,11 @@ def _detect_git_bypass(command: str) -> str | None:
 
 
 class GitNoVerifyRule(Rule):
-    rule_id = "GIT-001"
-    title = "Block git --no-verify"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "GIT-001"
+    title: str = "Block git --no-verify"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id):
             return []
@@ -404,10 +408,11 @@ class GitNoVerifyRule(Rule):
 
 
 class SearchReminderRule(Rule):
-    rule_id = "REMIND-SEARCH-001"
-    title = "Search reminder"
-    events = ("PreToolUse",)
+    rule_id: str = "REMIND-SEARCH-001"
+    title: str = "Search reminder"
+    events: tuple[str, ...] = ("PreToolUse",)
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not ctx.config.search_reminder_message:
             return []
@@ -477,10 +482,11 @@ def _run_quality_commands(
 
 
 class PostEditQualityRule(Rule):
-    rule_id = "QUALITY-POST-001"
-    title = "Post-edit quality gate"
-    events = ("PostToolUse",)
+    rule_id: str = "QUALITY-POST-001"
+    title: str = "Post-edit quality gate"
+    events: tuple[str, ...] = ("PostToolUse",)
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not is_rule_enabled(ctx, self.rule_id):
             return []

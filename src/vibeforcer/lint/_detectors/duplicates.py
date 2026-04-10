@@ -5,6 +5,7 @@
 - ``detect_repeated_blocks``: repeated consecutive statement blocks
 - ``detect_duplicate_call_sequences``: functions with identical call patterns
 """
+
 from __future__ import annotations
 
 import ast
@@ -13,7 +14,8 @@ import hashlib
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Set
 from pathlib import Path
-from typing import TypeGuard, TypeVar
+from typing import TypeGuard, TypeVar, cast
+from typing_extensions import override
 
 from vibeforcer.lint._baseline import Violation
 from vibeforcer.lint._config import get_config
@@ -23,19 +25,66 @@ from vibeforcer.lint._helpers import (
     find_source_files,
     function_body_lines,
 )
-from .wrappers import _call_name
+from .wrappers import call_name
 
 
-_BUILTINS = frozenset({
-    "len", "range", "print", "str", "int", "float", "bool", "list", "dict",
-    "set", "tuple", "type", "isinstance", "issubclass", "hasattr", "getattr",
-    "setattr", "delattr", "super", "property", "staticmethod", "classmethod",
-    "enumerate", "zip", "map", "filter", "sorted", "reversed", "min", "max",
-    "sum", "any", "all", "abs", "round", "repr", "hash", "id", "callable",
-    "iter", "next", "open", "ValueError", "TypeError", "KeyError",
-    "AttributeError", "RuntimeError", "NotImplementedError", "StopIteration",
-    "Exception", "True", "False", "None",
-})
+_BUILTINS = frozenset(
+    {
+        "len",
+        "range",
+        "print",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "type",
+        "isinstance",
+        "issubclass",
+        "hasattr",
+        "getattr",
+        "setattr",
+        "delattr",
+        "super",
+        "property",
+        "staticmethod",
+        "classmethod",
+        "enumerate",
+        "zip",
+        "map",
+        "filter",
+        "sorted",
+        "reversed",
+        "min",
+        "max",
+        "sum",
+        "any",
+        "all",
+        "abs",
+        "round",
+        "repr",
+        "hash",
+        "id",
+        "callable",
+        "iter",
+        "next",
+        "open",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "AttributeError",
+        "RuntimeError",
+        "NotImplementedError",
+        "StopIteration",
+        "Exception",
+        "True",
+        "False",
+        "None",
+    }
+)
 
 _SKIP_DECORATORS = frozenset({"abstractmethod", "overload", "property"})
 
@@ -53,16 +102,15 @@ class _Normalizer(ast.NodeTransformer):
 
     def __init__(self) -> None:
         self._name_map: dict[str, str] = {}
-        self._call_func_ids: set[int] = set()
+        self.call_func_ids: set[int] = set()
 
-    def _positional_id(self, name: str) -> str:
-        return self._name_map.setdefault(name, f"v{len(self._name_map)}")
-
+    @override
     def visit_Name(self, node: ast.Name) -> ast.Name:
-        if id(node) not in self._call_func_ids and node.id not in _BUILTINS:
-            node.id = self._positional_id(node.id)
+        if id(node) not in self.call_func_ids and node.id not in _BUILTINS:
+            node.id = self._name_map.setdefault(node.id, f"v{len(self._name_map)}")
         return node
 
+    @override
     def visit_Constant(self, node: ast.Constant) -> ast.Constant:
         # bool must be checked before int (bool is a subclass of int)
         for typ, token in _CONSTANT_TYPE_MAP.items():
@@ -73,16 +121,18 @@ class _Normalizer(ast.NodeTransformer):
             node.value = "NONE"
         return node
 
+    @override
     def visit_arg(self, node: ast.arg) -> ast.arg:
-        node.arg = self._positional_id(node.arg)
+        node.arg = self._name_map.setdefault(node.arg, f"v{len(self._name_map)}")
         node.annotation = None
         visited = self.generic_visit(node)
         if not isinstance(visited, ast.arg):
             raise TypeError("expected ast.arg from generic_visit")
         return visited
 
+    @override
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
-        node.name = self._positional_id(node.name)
+        node.name = self._name_map.setdefault(node.name, f"v{len(self._name_map)}")
         node.returns = None
         node.decorator_list = []
         visited = self.generic_visit(node)
@@ -90,8 +140,11 @@ class _Normalizer(ast.NodeTransformer):
             raise TypeError("expected ast.FunctionDef from generic_visit")
         return visited
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
-        node.name = self._positional_id(node.name)
+    @override
+    def visit_AsyncFunctionDef(
+        self, node: ast.AsyncFunctionDef
+    ) -> ast.AsyncFunctionDef:
+        node.name = self._name_map.setdefault(node.name, f"v{len(self._name_map)}")
         node.returns = None
         node.decorator_list = []
         visited = self.generic_visit(node)
@@ -106,9 +159,9 @@ def _normalize_ast(node: ast.AST) -> str:
     normalizer = _Normalizer()
     for child in ast.walk(tree):
         if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
-            normalizer._call_func_ids.add(id(child.func))
-    normalizer.visit(tree)
-    ast.fix_missing_locations(tree)
+            normalizer.call_func_ids.add(id(child.func))
+    _ = cast(object, normalizer.visit(tree))
+    _ = ast.fix_missing_locations(tree)
     return ast.dump(tree)
 
 
@@ -154,7 +207,9 @@ def _is_docstring_node(node: ast.Constant, parent_map: dict[int, ast.AST]) -> bo
     if not isinstance(parent, ast.Expr):
         return False
     gp = parent_map.get(id(parent))
-    if not isinstance(gp, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+    if not isinstance(
+        gp, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)
+    ):
         return False
     return bool(gp.body) and gp.body[0] is parent
 
@@ -163,7 +218,8 @@ _FUNC_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
 def _is_clone_candidate(
-    node: ast.AST, min_lines: int,
+    node: ast.AST,
+    min_lines: int,
 ) -> TypeGuard[ast.FunctionDef | ast.AsyncFunctionDef]:
     """True if node is a function suitable for clone detection."""
     if not isinstance(node, _FUNC_TYPES):
@@ -195,14 +251,15 @@ def _emit_group_violations(
             continue
         for rel, name, _ in members:
             others = [f"{r}:{n}" for r, n, _ in members if r != rel or n != name]
-            violations.append(Violation(
-                rule=rule,
-                relative_path=rel,
-                identifier=name,
-                detail=detail_fn(key, others),
-            ))
+            violations.append(
+                Violation(
+                    rule=rule,
+                    relative_path=rel,
+                    identifier=name,
+                    detail=detail_fn(key, others),
+                )
+            )
     return violations
-
 
 
 def detect_semantic_clones(
@@ -226,10 +283,10 @@ def detect_semantic_clones(
             groups[h].append((pf.rel, node.name, node.lineno))
 
     return _emit_group_violations(
-        "semantic-clone", groups,
+        "semantic-clone",
+        groups,
         lambda h, others: f"hash={h}, clones: {', '.join(others[:3])}",
     )
-
 
 
 def _collect_literals(
@@ -262,27 +319,32 @@ def detect_repeated_literals(
     """Flag magic numbers and string literals used excessively."""
     cfg = get_config()
     parsed = ensure_parsed(files, fallback=find_source_files())
-    num_counts, str_counts = _collect_literals(parsed, cfg.allowed_numbers, cfg.allowed_strings)
+    num_counts, str_counts = _collect_literals(
+        parsed, cfg.allowed_numbers, cfg.allowed_strings
+    )
 
     violations: list[Violation] = []
     for val, fset in num_counts.items():
         if len(fset) > cfg.max_repeated_magic_numbers:
-            violations.append(Violation(
-                rule="repeated-magic-number",
-                relative_path="<project>",
-                identifier=repr(val),
-                detail=f"appears in {len(fset)} files (max: {cfg.max_repeated_magic_numbers})",
-            ))
+            violations.append(
+                Violation(
+                    rule="repeated-magic-number",
+                    relative_path="<project>",
+                    identifier=repr(val),
+                    detail=f"appears in {len(fset)} files (max: {cfg.max_repeated_magic_numbers})",
+                )
+            )
     for val, fset in str_counts.items():
         if len(fset) > cfg.max_repeated_string_literals:
-            violations.append(Violation(
-                rule="repeated-string-literal",
-                relative_path="<project>",
-                identifier=repr(val)[:40],
-                detail=f"appears in {len(fset)} files (max: {cfg.max_repeated_string_literals})",
-            ))
+            violations.append(
+                Violation(
+                    rule="repeated-string-literal",
+                    relative_path="<project>",
+                    identifier=repr(val)[:40],
+                    detail=f"appears in {len(fset)} files (max: {cfg.max_repeated_string_literals})",
+                )
+            )
     return violations
-
 
 
 _MIN_BLOCK_SIZE = 3
@@ -325,28 +387,31 @@ def detect_repeated_blocks(
         if len(members) < 2:
             continue
         for rel, scope, start, end in members:
-            violations.append(Violation(
-                rule="repeated-code-block",
-                relative_path=rel,
-                identifier=scope,
-                detail=f"lines {start}-{end}, block hash {h}",
-            ))
+            violations.append(
+                Violation(
+                    rule="repeated-code-block",
+                    relative_path=rel,
+                    identifier=scope,
+                    detail=f"lines {start}-{end}, block hash {h}",
+                )
+            )
     return violations
 
 
-
-def _extract_call_sequence(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[str, ...]:
+def _extract_call_sequence(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[str, ...]:
     """Extract the ordered sequence of call target names from a function."""
     calls: list[tuple[int, str]] = []
     for child in ast.walk(node):
         if not isinstance(child, ast.Call):
             continue
-        name = _call_name(child)
+        name = call_name(child)
         if not name:
             continue
         for prefix in ("self.", "cls."):
             if name.startswith(prefix):
-                name = name[len(prefix):]
+                name = name[len(prefix) :]
                 break
         calls.append((child.lineno, name))
     calls.sort(key=lambda c: c[0])
@@ -371,7 +436,8 @@ def detect_duplicate_call_sequences(
                 groups[seq].append((pf.rel, node.name, node.lineno))
 
     return _emit_group_violations(
-        "duplicate-call-sequence", groups,
+        "duplicate-call-sequence",
+        groups,
         lambda seq, others: (
             f"calls [{', '.join(seq[:5])}{'...' if len(seq) > 5 else ''}], "
             f"shared with {', '.join(others[:3])}"

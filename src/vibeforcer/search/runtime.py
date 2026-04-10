@@ -6,13 +6,13 @@ import json
 import os
 import shutil
 import subprocess
-import urllib.error
+from http.client import HTTPResponse
 import urllib.request
 from pathlib import Path
+from typing import cast
 
 from vibeforcer._types import object_dict, object_list, string_value
 from vibeforcer.search.config import (
-    APP_NAME,
     DEFAULT_INDEXES_PATH,
     DEFAULT_ISLANDS_CONFIG,
     IsxError,
@@ -27,12 +27,14 @@ from vibeforcer.search.config import (
 def fetch_models(base_url: str, api_key: str | None, timeout: int = 10) -> list[str]:
     """Fetch model list from an OpenAI-compatible /v1/models endpoint."""
     url = base_url.rstrip("/") + "/v1/models"
-    headers = {}
+    headers: dict[str, str] = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = object_dict(json.load(resp))
+    with cast(HTTPResponse, urllib.request.urlopen(req, timeout=timeout)) as resp:
+        raw_text = resp.read().decode("utf-8")
+        raw_payload = cast(object, json.loads(raw_text))
+        payload = object_dict(raw_payload)
     data = object_list(payload.get("data"))
     model_ids: list[str] = []
     for item in data:
@@ -126,14 +128,14 @@ def render_islands_yaml(model: str) -> str:
 def write_islands_config(path: Path, model: str) -> None:
     """Write the managed islands YAML config."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_islands_yaml(model))
+    _ = path.write_text(render_islands_yaml(model))
 
 
 def runtime_env(
     cfg: SearchConfig, extra_env: dict[str, str] | None = None
 ) -> dict[str, str]:
     """Build the environment dict for an islands-ollama subprocess."""
-    env = os.environ.copy()
+    env: dict[str, str] = dict(os.environ)
     base_url = string_value(cfg.get("base_url"))
     if base_url:
         env["OPENAI_BASE_URL"] = base_url

@@ -150,8 +150,8 @@ _ERROR_PATTERNS = [
     re.compile(r"Traceback \(most recent call last\)"),
     re.compile(
         r"(?:SyntaxError|TypeError|NameError|ValueError|AttributeError"
-        r"|ImportError|KeyError|IndexError|RuntimeError|AssertionError"
-        r"|FileNotFoundError|ModuleNotFoundError|OSError|PermissionError):",
+        + r"|ImportError|KeyError|IndexError|RuntimeError|AssertionError"
+        + r"|FileNotFoundError|ModuleNotFoundError|OSError|PermissionError):",
         re.MULTILINE,
     ),
     # Lint / type-check
@@ -279,10 +279,11 @@ class BashFailureReinforcementRule(Rule):
     commands where non-zero exit is normal (grep, diff, test, etc.).
     """
 
-    rule_id = "ERRORS-FAIL-001"
-    title = "Bash failure reinforcement"
-    events = ("PostToolUseFailure",)
+    rule_id: str = "ERRORS-FAIL-001"
+    title: str = "Bash failure reinforcement"
+    events: tuple[str, ...] = ("PostToolUseFailure",)
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         enabled = ctx.config.enabled_rules.get(self.rule_id)
         if enabled is not None and not enabled:

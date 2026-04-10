@@ -27,7 +27,8 @@ def object_dict(value: object) -> ObjectDict:
 
 def object_list(value: object) -> list[object]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return list(value)
+        raw_sequence = cast(Sequence[object], value)
+        return list(raw_sequence)
     return []
 
 

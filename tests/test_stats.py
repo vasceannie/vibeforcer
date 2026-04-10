@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from vibeforcer._types import ObjectDict, object_dict, object_list
-from vibeforcer.stats import analyze, _parse_timestamp
+from vibeforcer.stats import analyze, parse_timestamp
 
 
 def _analyze(entries: list[ObjectDict]) -> ObjectDict:
@@ -15,8 +15,9 @@ def _analyze(entries: list[ObjectDict]) -> ObjectDict:
 def _pair_counts(stats: ObjectDict, key: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     for item in object_list(stats.get(key)):
-        if isinstance(item, tuple) and len(item) == 2:
-            name, count = item
+        pair = object_list(item)
+        if len(pair) == 2:
+            name, count = pair
             if isinstance(name, str) and isinstance(count, int):
                 counts[name] = count
     return counts
@@ -28,25 +29,25 @@ def _string_list(mapping: ObjectDict, key: str) -> list[str]:
 
 class TestParseTimestamp:
     def test_none_cutoff_never_skips(self) -> None:
-        assert not _parse_timestamp("2026-01-01T00:00:00+00:00", None), (
+        assert not parse_timestamp("2026-01-01T00:00:00+00:00", None), (
             "None cutoff must not skip"
         )
 
     def test_before_cutoff_skips(self) -> None:
         cutoff = datetime(2026, 3, 1, tzinfo=timezone.utc)
-        assert _parse_timestamp("2026-02-01T00:00:00+00:00", cutoff), (
+        assert parse_timestamp("2026-02-01T00:00:00+00:00", cutoff), (
             "entry before cutoff must be skipped"
         )
 
     def test_after_cutoff_keeps(self) -> None:
         cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        assert not _parse_timestamp("2026-06-01T00:00:00+00:00", cutoff), (
+        assert not parse_timestamp("2026-06-01T00:00:00+00:00", cutoff), (
             "entry after cutoff must be kept"
         )
 
     def test_invalid_timestamp_keeps(self) -> None:
         cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        assert not _parse_timestamp("not-a-date", cutoff), (
+        assert not parse_timestamp("not-a-date", cutoff), (
             "invalid timestamp must not be skipped"
         )
 

@@ -1,4 +1,5 @@
 """Git helpers for the search subsystem."""
+
 from __future__ import annotations
 
 import re
@@ -90,21 +91,25 @@ def resolve_add_repo(raw: str, cwd: Path | None = None) -> str:
     target = Path(stripped).expanduser()
 
     if stripped == "." or target.is_dir():
-        effective_cwd = target if target.is_absolute() else (
-            Path(cwd) / target if cwd else target
+        effective_cwd = (
+            target if target.is_absolute() else (Path(cwd) / target if cwd else target)
         )
         effective_cwd = effective_cwd.resolve()
         repo_root = get_git_repo_root(effective_cwd)
         if not repo_root:
             raise IsxError(
-                f"could not resolve '{stripped}': not inside a git working "
-                "tree. Pass a repository URL instead."
+                (
+                    f"could not resolve '{stripped}': not inside a git working "
+                    "tree. Pass a repository URL instead."
+                )
             )
         clone_url = get_git_remote_url(repo_root)
         if not clone_url:
             raise IsxError(
-                f"git repo at {repo_root} has no 'origin' remote. "
-                "Pass the clone URL explicitly."
+                (
+                    f"git repo at {repo_root} has no 'origin' remote. "
+                    "Pass the clone URL explicitly."
+                )
             )
         return clone_url
 

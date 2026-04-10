@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from collections.abc import Iterable
 from functools import cached_property
 from pathlib import Path
-from typing import Iterable
+from typing import final
 
 from vibeforcer._types import ObjectDict, ObjectMapping, object_dict, object_list
 from vibeforcer.constants import EDIT_TOOL_NAMES, LANGUAGE_BY_SUFFIX
@@ -149,6 +150,7 @@ def shell_command_paths(command: str) -> list[str]:
     return seen
 
 
+@final
 class HookPayload:
     def __init__(self, payload: ObjectMapping, config: RuntimeConfig) -> None:
         self.payload = object_dict(payload)
@@ -201,8 +203,12 @@ class HookPayload:
         targets: list[ContentTarget] = []
 
         merged = dict(self.tool_input)
-        merged.setdefault("resolved_file_path", self.payload.get("resolved_file_path"))
-        merged.setdefault("original_file_path", self.payload.get("original_file_path"))
+        _ = merged.setdefault(
+            "resolved_file_path", self.payload.get("resolved_file_path")
+        )
+        _ = merged.setdefault(
+            "original_file_path", self.payload.get("original_file_path")
+        )
         path_value = extract_path_from_mapping(merged)
         content_value = extract_content_from_mapping(merged)
         if path_value and content_value:
@@ -250,10 +256,9 @@ class HookPayload:
     def candidate_paths(self) -> list[str]:
         values: list[str] = []
         for source in (self.payload, self.tool_input):
-            if isinstance(source, dict):
-                path_value = extract_path_from_mapping(source)
-                if path_value:
-                    values.append(path_value)
+            path_value = extract_path_from_mapping(source)
+            if path_value:
+                values.append(path_value)
         for item in object_list(self.tool_input.get("edits")):
             item_dict = object_dict(item)
             if not item_dict:

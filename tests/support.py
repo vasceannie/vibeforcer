@@ -2,12 +2,45 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Protocol
 
 from vibeforcer._types import ObjectDict, object_dict, string_value
 from vibeforcer.models import EngineResult
 
 BUNDLE_ROOT = Path(__file__).resolve().parents[1]
+
+# ---------------------------------------------------------------------------
+# Fixture type aliases — import in test files to annotate fixture params.
+# ---------------------------------------------------------------------------
+
+LoadFixture = Callable[[str], dict[str, object]]
+
+
+class WriteBuilder(Protocol):
+    def __call__(
+        self, file_path: str, content: str, cwd: str | None = ...
+    ) -> dict[str, object]: ...
+
+
+class BashBuilder(Protocol):
+    def __call__(
+        self, command: str, cwd: str | None = ...
+    ) -> dict[str, object]: ...
+
+
+class EvaluateFn(Protocol):
+    def __call__(
+        self,
+        payload_dict: Mapping[str, object],
+        platform: str = ...,
+    ) -> EngineResult: ...
+
+
+# ---------------------------------------------------------------------------
+# Result accessors
+# ---------------------------------------------------------------------------
 
 
 def require_output(result: EngineResult) -> ObjectDict:
@@ -16,11 +49,13 @@ def require_output(result: EngineResult) -> ObjectDict:
 
 
 def hook_output(result: EngineResult) -> ObjectDict:
-    return object_dict(require_output(result).get("hookSpecificOutput"))
+    assert result.output is not None, "Expected structured output, got None"
+    return object_dict(result.output.get("hookSpecificOutput"))
 
 
 def nested_output(mapping: ObjectDict, key: str) -> ObjectDict:
-    return object_dict(mapping.get(key))
+    raw: object = mapping.get(key, {})
+    return object_dict(raw)
 
 
 def output_string(mapping: ObjectDict, key: str, default: str = "") -> str:
@@ -34,6 +69,11 @@ def required_string(mapping: ObjectDict, key: str) -> str:
         f"Expected string at key '{key}', got: {mapping.get(key)!r}"
     )
     return value
+
+
+# ---------------------------------------------------------------------------
+# Assertion helpers
+# ---------------------------------------------------------------------------
 
 
 def assert_denied_by(

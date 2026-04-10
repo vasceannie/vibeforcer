@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import cast
 
 from vibeforcer._types import ObjectDict, object_dict, object_list, string_value
 
@@ -51,6 +52,9 @@ def _parse_timestamp(ts_raw: str, cutoff: datetime | None) -> bool:
         return False
 
 
+parse_timestamp = _parse_timestamp
+
+
 def load_entries(path: Path, days: int | None) -> list[dict[str, object]]:
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=days) if days is not None else None
@@ -62,8 +66,11 @@ def load_entries(path: Path, days: int | None) -> list[dict[str, object]]:
             if not stripped:
                 continue
             try:
-                entry = json.loads(stripped)
+                raw_entry = cast(object, json.loads(stripped))
             except json.JSONDecodeError:
+                continue
+            entry = object_dict(raw_entry)
+            if not entry:
                 continue
             ts = entry.get("timestamp", "")
             if isinstance(ts, str) and _parse_timestamp(ts, cutoff):
@@ -225,12 +232,9 @@ _PairList = list[tuple[str, int]]
 def _as_pair_list(value: object) -> _PairList:
     pairs: _PairList = []
     for item in object_list(value):
-        if (
-            isinstance(item, Sequence)
-            and not isinstance(item, (str, bytes, bytearray))
-            and len(item) == 2
-        ):
-            label, count = item
+        seq_item = object_list(item)
+        if len(seq_item) == 2:
+            label, count = seq_item
             if isinstance(label, str) and isinstance(count, int):
                 pairs.append((label, count))
     return pairs
@@ -266,7 +270,11 @@ def print_report(stats: Mapping[str, object]) -> None:
     _print_denied_files(stats)
     _print_retry_patterns(stats)
     _print_daily_volume(stats)
-    _print_severity(stats)
+    _print_pairs_section(
+        title="Severity Breakdown",
+        pairs=_pairs(stats, "by_severity"),
+        formatter=lambda sev, count: f"  {sev:10s} {count:6,}",
+    )
 
 
 def _print_denied_rules(stats: Mapping[str, object]) -> None:
@@ -318,14 +326,6 @@ def _print_daily_volume(stats: Mapping[str, object]) -> None:
     for day, count in _pairs(stats, "daily_counts")[-14:]:
         bar = "\u2588" * min(count // 50, 60)
         print(f"  {day}  {count:5,}  {bar}")
-
-
-def _print_severity(stats: Mapping[str, object]) -> None:
-    _print_pairs_section(
-        title="Severity Breakdown",
-        pairs=_pairs(stats, "by_severity"),
-        formatter=lambda sev, count: f"  {sev:10s} {count:6,}",
-    )
 
 
 def run_stats(

@@ -3,16 +3,59 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from typing_extensions import override
 
+from vibeforcer._types import object_dict, object_list
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import path_matches_glob
 
 if TYPE_CHECKING:
     from vibeforcer.context import HookContext
+
+
+def _extract_rules_dict(raw: object) -> dict[str, list[str]]:
+    """Parse a rules mapping from JSON-loaded baseline data."""
+    typed = object_dict(raw)
+    if not typed:
+        return {}
+    result: dict[str, list[str]] = {}
+    for rule_name, ids_val in typed.items():
+        ids = object_list(ids_val)
+        if ids:
+            result[rule_name] = [str(v) for v in ids]
+    return result
+
+
+def _parse_json_dict(text: str) -> dict[str, object] | None:
+    """Parse JSON text and return a dict, or None on failure."""
+    try:
+        raw: object = cast(object, json.loads(text))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    parsed = object_dict(raw)
+    if not parsed:
+        return None
+    return parsed
+
+
+def _find_increases(
+    new_rules: dict[str, list[str]],
+    old_rules: dict[str, list[str]],
+) -> list[str]:
+    """Return formatted strings for rules with increased violation counts."""
+    increases: list[str] = []
+    for rule_name, new_ids in new_rules.items():
+        old_ids = old_rules.get(rule_name, [])
+        old_count = len(old_ids)
+        new_count = len(new_ids)
+        if new_count > old_count:
+            increases.append(
+                f"  {rule_name}: {old_count} -> {new_count} (+{new_count - old_count})"
+            )
+    return increases
 
 
 class BaselineGuardRule(Rule):
@@ -88,73 +131,35 @@ class BaselineGuardRule(Rule):
         new_content: str,
         ctx: HookContext,
     ) -> list[RuleFinding]:
-        try:
-            new_data = json.loads(new_content)
-        except (json.JSONDecodeError, TypeError):
+        new_data = _parse_json_dict(new_content)
+        if new_data is None:
             return []
-
-        # Guard: Edit tool may supply a partial JSON fragment (string/list/etc.)
-        # rather than a full baselines.json dict — bail out gracefully.
-        if not isinstance(new_data, dict):
-            return []
-
-        raw_new_rules = new_data.get("rules", {})
-        if not isinstance(raw_new_rules, dict):
-            return []
-        new_rules = {
-            str(rule_name): list(ids)
-            for rule_name, ids in raw_new_rules.items()
-            if isinstance(ids, list)
-        }
+        new_rules = _extract_rules_dict(new_data.get("rules", {}))
 
         existing = self._resolve_existing_path(path_str, ctx)
         if existing is None:
-            return []  # First baseline creation — allow
-
-        try:
-            old_data = json.loads(existing.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
             return []
-
-        # Guard: on-disk file may be malformed or non-dict
-        if not isinstance(old_data, dict):
+        old_data = _parse_json_dict(existing.read_text(encoding="utf-8"))
+        if old_data is None:
             return []
+        old_rules = _extract_rules_dict(old_data.get("rules", {}))
 
-        raw_old_rules = old_data.get("rules", {})
-        if not isinstance(raw_old_rules, dict):
-            return []
-        old_rules = {
-            str(rule_name): list(ids)
-            for rule_name, ids in raw_old_rules.items()
-            if isinstance(ids, list)
-        }
-
-        # Compare counts per rule
-        increases: list[str] = []
-        for rule_name, new_ids in new_rules.items():
-            old_ids = old_rules.get(rule_name, [])
-            old_count = len(old_ids)
-            new_count = len(new_ids)
-            if new_count > old_count:
-                increases.append(
-                    f"  {rule_name}: {old_count} -> {new_count} (+{new_count - old_count})"
-                )
-
+        increases = _find_increases(new_rules, old_rules)
         if not increases:
-            return []  # All decreases or unchanged
-
+            return []
+        detail = "\n".join(increases)
+        msg = (
+            "Baseline inflation blocked. The following rules have MORE "
+            f"violations than before:\n{detail}\n\n"
+            "Fix the violations instead of increasing the baseline. "
+            "Only decreases (fixing debt) are allowed."
+        )
         return [
             RuleFinding(
                 rule_id=self.rule_id,
                 title=self.title,
                 severity=Severity.HIGH,
                 decision="deny",
-                message=(
-                    "Baseline inflation blocked. The following rules have MORE "
-                    + "violations than before:\n"
-                    + "\n".join(increases)
-                    + "\n\nFix the violations instead of increasing the baseline. "
-                    + "Only decreases (fixing debt) are allowed."
-                ),
+                message=msg,
             )
         ]

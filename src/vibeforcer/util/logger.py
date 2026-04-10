@@ -12,7 +12,7 @@ def _emit(level: str, message: str, **fields: object) -> None:
         "message": message,
         **fields,
     }
-    sys.stderr.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
+    _ = sys.stderr.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
 
 
 def debug(message: str, **fields: object) -> None:

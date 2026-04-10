@@ -20,7 +20,6 @@ from vibeforcer.lint._helpers import (
     enclosing_function,
     ensure_parsed,
     find_source_files,
-    relative_path,
 )
 
 

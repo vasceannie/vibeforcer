@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -15,6 +16,10 @@ from vibeforcer.engine import evaluate_payload as _evaluate_payload
 from vibeforcer.models import EngineResult
 
 BUNDLE_ROOT = Path(__file__).resolve().parents[1]
+
+# pytest discovers fixtures by name — declare autouse fixtures as exported
+# so basedpyright's reportUnusedFunction doesn't flag them.
+__all__ = ["_vibeforcer_env"]
 
 # vibeforcer config lives under src/vibeforcer/resources/
 _RESOURCES = BUNDLE_ROOT / "src" / "vibeforcer" / "resources"
@@ -26,7 +31,7 @@ _RESOURCES = BUNDLE_ROOT / "src" / "vibeforcer" / "resources"
 
 
 @pytest.fixture(autouse=True)
-def _vibeforcer_env(tmp_path):
+def _vibeforcer_env(tmp_path: Path) -> Generator[None, None, None]:
     """Set up vibeforcer env vars for every test.
 
     Points VIBEFORCER_ROOT to a tmp dir with config + logs.
@@ -38,29 +43,29 @@ def _vibeforcer_env(tmp_path):
 
     # Create a temp vibeforcer root with prompt context
     test_root = tmp_path / "vibeforcer_root"
-    test_root.mkdir()
-    (test_root / "logs").mkdir()
-    (test_root / "logs" / "async").mkdir()
+    test_root.mkdir(exist_ok=True)
+    (test_root / "logs").mkdir(exist_ok=True)
+    (test_root / "logs" / "async").mkdir(exist_ok=True)
 
     # Copy prompt context
     if (_RESOURCES / "prompt_context").exists():
-        shutil.copytree(_RESOURCES / "prompt_context", test_root / "prompt_context")
+        _ = shutil.copytree(_RESOURCES / "prompt_context", test_root / "prompt_context")
 
     os.environ["VIBEFORCER_ROOT"] = str(test_root)
     os.environ["VIBEFORCER_CONFIG"] = str(_RESOURCES / "defaults.json")
     # Clear legacy env to avoid fallback
-    os.environ.pop("CLAUDE_HOOK_LAYER_ROOT", None)
-    os.environ.pop("HOOK_LAYER_ROOT", None)
+    _ = os.environ.pop("CLAUDE_HOOK_LAYER_ROOT", None)
+    _ = os.environ.pop("HOOK_LAYER_ROOT", None)
 
     yield
 
     # Restore
     if old_root is None:
-        os.environ.pop("VIBEFORCER_ROOT", None)
+        _ = os.environ.pop("VIBEFORCER_ROOT", None)
     else:
         os.environ["VIBEFORCER_ROOT"] = old_root
     if old_config is None:
-        os.environ.pop("VIBEFORCER_CONFIG", None)
+        _ = os.environ.pop("VIBEFORCER_CONFIG", None)
     else:
         os.environ["VIBEFORCER_CONFIG"] = old_config
     if old_legacy is not None:
@@ -73,34 +78,36 @@ def bundle_root() -> Path:
 
 
 @pytest.fixture
-def load_fixture():
+def load_fixture() -> Callable[[str], ObjectDict]:
     """Return a callable that loads a fixture JSON by name."""
 
-    def _load(name: str) -> dict[str, object]:
+    def _load(name: str) -> ObjectDict:
         fixture_path = BUNDLE_ROOT / "fixtures" / name
         raw = fixture_path.read_text(encoding="utf-8")
-        return json.loads(raw)
+        return object_dict(cast(object, json.loads(raw)))
 
     return _load
 
 
 @pytest.fixture
-def evaluate():
+def evaluate() -> Callable[[ObjectDict], EngineResult]:
     """Return the evaluate_payload callable."""
     return _evaluate_payload
 
 
 @pytest.fixture
-def tmp_project(tmp_path):
+def tmp_project(tmp_path: Path) -> Generator[Path, None, None]:
     """Create a temp directory with vibeforcer config."""
     project_dir = tmp_path / "project"
-    project_dir.mkdir()
-    (project_dir / "logs").mkdir()
-    (project_dir / "logs" / "async").mkdir()
+    project_dir.mkdir(exist_ok=True)
+    (project_dir / "logs").mkdir(exist_ok=True)
+    (project_dir / "logs" / "async").mkdir(exist_ok=True)
 
     # Copy prompt context
     if (_RESOURCES / "prompt_context").exists():
-        shutil.copytree(_RESOURCES / "prompt_context", project_dir / "prompt_context")
+        _ = shutil.copytree(
+            _RESOURCES / "prompt_context", project_dir / "prompt_context"
+        )
 
     old_root = os.environ.get("VIBEFORCER_ROOT")
     old_config = os.environ.get("VIBEFORCER_CONFIG")
@@ -110,31 +117,31 @@ def tmp_project(tmp_path):
     yield project_dir
 
     if old_root is None:
-        os.environ.pop("VIBEFORCER_ROOT", None)
+        _ = os.environ.pop("VIBEFORCER_ROOT", None)
     else:
         os.environ["VIBEFORCER_ROOT"] = old_root
     if old_config is None:
-        os.environ.pop("VIBEFORCER_CONFIG", None)
+        _ = os.environ.pop("VIBEFORCER_CONFIG", None)
     else:
         os.environ["VIBEFORCER_CONFIG"] = old_config
 
 
 @pytest.fixture
-def langgraph_project(tmp_path):
+def langgraph_project(tmp_path: Path) -> Generator[Path, None, None]:
     """Create a temp project with a pyproject.toml declaring langgraph."""
-    (tmp_path / "pyproject.toml").write_text(
+    _ = (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "demo"\ndependencies = ["langgraph>=0.2"]\n',
         encoding="utf-8",
     )
-    (tmp_path / "src").mkdir()
-    (tmp_path / "logs").mkdir()
-    (tmp_path / "logs" / "async").mkdir()
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "logs").mkdir(exist_ok=True)
+    (tmp_path / "logs" / "async").mkdir(exist_ok=True)
 
     old_root = os.environ.get("VIBEFORCER_ROOT")
     os.environ["VIBEFORCER_ROOT"] = str(tmp_path)
     yield tmp_path
     if old_root is None:
-        os.environ.pop("VIBEFORCER_ROOT", None)
+        _ = os.environ.pop("VIBEFORCER_ROOT", None)
     else:
         os.environ["VIBEFORCER_ROOT"] = old_root
 
@@ -145,12 +152,10 @@ def langgraph_project(tmp_path):
 
 
 @pytest.fixture
-def pretool_write():
+def pretool_write() -> Callable[[str, str, str | None], ObjectDict]:
     """Build a PreToolUse Write payload."""
 
-    def _build(
-        file_path: str, content: str, cwd: str | None = None
-    ) -> dict[str, object]:
+    def _build(file_path: str, content: str, cwd: str | None = None) -> ObjectDict:
         return {
             "session_id": "t",
             "cwd": cwd or str(BUNDLE_ROOT),
@@ -163,10 +168,10 @@ def pretool_write():
 
 
 @pytest.fixture
-def pretool_bash():
+def pretool_bash() -> Callable[[str, str | None], ObjectDict]:
     """Build a PreToolUse Bash payload."""
 
-    def _build(command: str, cwd: str | None = None) -> dict[str, object]:
+    def _build(command: str, cwd: str | None = None) -> ObjectDict:
         return {
             "session_id": "t",
             "cwd": cwd or str(BUNDLE_ROOT),
@@ -189,11 +194,13 @@ def require_output(result: EngineResult) -> ObjectDict:
 
 
 def hook_output(result: EngineResult) -> ObjectDict:
-    return object_dict(require_output(result).get("hookSpecificOutput"))
+    assert result.output is not None, "Expected structured output, got None"
+    return object_dict(result.output.get("hookSpecificOutput"))
 
 
 def nested_output(mapping: ObjectDict, key: str) -> ObjectDict:
-    return object_dict(mapping.get(key))
+    raw: object = mapping.get(key, {})
+    return object_dict(raw)
 
 
 def output_string(mapping: ObjectDict, key: str, default: str = "") -> str:

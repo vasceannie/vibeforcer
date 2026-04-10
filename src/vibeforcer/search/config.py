@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import cast
+
+from vibeforcer._types import object_dict, object_list, string_value
 
 
 class IsxError(RuntimeError):
@@ -86,6 +89,27 @@ COMMANDS = [
 SearchConfig = dict[str, str | list[str] | dict[str, str] | None]
 
 
+def _coerce_search_config(value: object) -> SearchConfig:
+    data = object_dict(value)
+    config: SearchConfig = {}
+    for key, raw_value in data.items():
+        string_item = string_value(raw_value)
+        if string_item is not None:
+            config[key] = string_item
+            continue
+        if raw_value is None:
+            config[key] = None
+            continue
+        string_list = object_list(raw_value)
+        if string_list and all(isinstance(item, str) for item in string_list):
+            config[key] = cast(list[str], string_list)
+            continue
+        nested = object_dict(raw_value)
+        if nested and all(isinstance(item, str) for item in nested.values()):
+            config[key] = cast(dict[str, str], nested)
+    return config
+
+
 # -- path helpers ------------------------------------------------------------
 
 
@@ -105,7 +129,8 @@ def load_config() -> SearchConfig:
     """Load the persistent isx config from ``~/.config/isx/config.json``."""
     if not APP_CONFIG.exists():
         raise IsxError(f"{APP_CONFIG} does not exist. Run `isx init` first.")
-    return json.loads(APP_CONFIG.read_text())
+    raw_config = cast(object, json.loads(APP_CONFIG.read_text()))
+    return _coerce_search_config(raw_config)
 
 
 def save_config(
@@ -113,7 +138,7 @@ def save_config(
 ) -> None:
     """Write *data* to the isx config file."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
-    APP_CONFIG.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    _ = APP_CONFIG.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
 def detect_provider() -> str:

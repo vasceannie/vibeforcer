@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import textwrap
-from collections.abc import MutableMapping
 from pathlib import Path
+from typing import cast
 
 from vibeforcer._types import ObjectDict, object_dict, object_list
 from vibeforcer.search.config import (
@@ -23,7 +23,7 @@ def write_text_file(path: Path, content: str, force: bool) -> None:
     if path.exists() and not force:
         raise IsxError(f"{path} already exists. Re-run with --force to overwrite it.")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
+    _ = path.write_text(content)
 
 
 def append_unique_json_list(path: Path, key: str, value: str) -> None:
@@ -31,13 +31,12 @@ def append_unique_json_list(path: Path, key: str, value: str) -> None:
     data: ObjectDict
     if path.exists():
         try:
-            data = object_dict(json.loads(path.read_text()))
+            raw_data = cast(object, json.loads(path.read_text()))
+            data = object_dict(raw_data)
         except json.JSONDecodeError as exc:
             raise IsxError(f"could not parse {path} as JSON: {exc}") from exc
     else:
         data = {"$schema": "https://opencode.ai/config.json"}
-    if not isinstance(data, MutableMapping):
-        raise IsxError(f"expected {path} to contain a JSON object")
 
     items = object_list(data.get(key))
     if data.get(key) is not None and not items:
@@ -47,7 +46,7 @@ def append_unique_json_list(path: Path, key: str, value: str) -> None:
     data[key] = items
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    _ = path.write_text(json.dumps(data, indent=2) + "\n")
 
 
 def render_isx_skill(skill_name: str) -> str:
@@ -340,7 +339,11 @@ def render_opencode_plugin() -> str:
     )
 
 
-def scaffold_skill(skill_name: str, skill_target: str, force: bool) -> list[Path]:
+def scaffold_skill(
+    skill_name: str = DEFAULT_SKILL_NAME,
+    skill_target: str = "both",
+    force: bool = False,
+) -> list[Path]:
     """Write the isx SKILL.md to one or more skill directories."""
     destinations: list[Path] = []
     if skill_target in {"claude", "both"}:
@@ -355,7 +358,9 @@ def scaffold_skill(skill_name: str, skill_target: str, force: bool) -> list[Path
 
 
 def scaffold_opencode_plugin(
-    plugin_path: Path, opencode_config: Path, force: bool
+    plugin_path: Path = DEFAULT_OPENCODE_PLUGIN_PATH,
+    opencode_config: Path = DEFAULT_OPENCODE_CONFIG,
+    force: bool = False,
 ) -> Path:
     """Write the OpenCode plugin and register it in opencode.json."""
     write_text_file(plugin_path, render_opencode_plugin(), force=force)

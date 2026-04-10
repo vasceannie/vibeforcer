@@ -10,16 +10,21 @@ from __future__ import annotations
 import importlib
 import re
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
-_toml_parser_module = None
+
+class _TomlParserModule(Protocol):
+    def loads(self, text: str) -> object: ...
+
+
+_toml_parser_module: _TomlParserModule | None = None
 for module_name in ("tomllib", "tomli"):
     try:
         _module = importlib.import_module(module_name)
     except ModuleNotFoundError:
         continue
     if callable(getattr(_module, "loads", None)):
-        _toml_parser_module = _module
+        _toml_parser_module = cast(_TomlParserModule, cast(object, _module))
         break
 
 from vibeforcer.lint import __version__
@@ -157,7 +162,7 @@ def _toml_value(v: object) -> str:
     if isinstance(v, str):
         return _toml_str(v)
     if isinstance(v, list):
-        return _toml_list(v)
+        return _toml_list(cast(list[object], v))
     return repr(v)
 
 
@@ -235,7 +240,8 @@ def _parse_existing(text: str) -> dict[str, dict[str, object]] | None:
     raw = _toml_parser_module.loads(text)
     if not isinstance(raw, dict):
         return None
-    return cast(dict[str, dict[str, object]], raw)
+    typed_raw = cast(object, raw)
+    return cast(dict[str, dict[str, object]], typed_raw)
 
 
 def _build_injection_plan(
@@ -256,7 +262,9 @@ def _build_injection_plan(
     return inject_existing, append_new
 
 
-def _apply_injections(lines: list[str], inject_existing: list[tuple[int, list[str]]]) -> None:
+def _apply_injections(
+    lines: list[str], inject_existing: list[tuple[int, list[str]]]
+) -> None:
     """Insert new key lines into *lines* at the correct positions (in reverse order)."""
     inject_existing.sort(key=lambda x: x[0], reverse=True)
     for after_idx, new_lines in inject_existing:
