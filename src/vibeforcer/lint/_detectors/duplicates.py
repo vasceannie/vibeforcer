@@ -174,6 +174,16 @@ def _is_import_stmt(stmt: ast.stmt) -> bool:
     return isinstance(stmt, (ast.Import, ast.ImportFrom))
 
 
+def _is_future_import(stmt: ast.stmt) -> bool:
+    """Return True when *stmt* is ``from __future__ import ...``."""
+    return isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__"
+
+
+def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
+    """Remove leading ``from __future__ import ...`` statements from *body*."""
+    return [s for s in body if not _is_future_import(s)]
+
+
 def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
     """Return body with the leading docstring removed, if present."""
     if not body:
@@ -360,7 +370,7 @@ def _collect_block_windows(
             if isinstance(node, _FUNC_TYPES):
                 body, scope = _skip_docstring(node.body), node.name
             elif isinstance(node, ast.Module):
-                body, scope = node.body, "<module>"
+                body, scope = _strip_future_imports(node.body), "<module>"
             else:
                 continue
             if len(body) < _MIN_BLOCK_SIZE:
