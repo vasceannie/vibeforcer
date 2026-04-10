@@ -13,7 +13,7 @@ from pathlib import Path
 
 from vibeforcer.lint._baseline import Violation
 from vibeforcer.lint._config import get_config
-from vibeforcer.lint._helpers import ParsedFile, ensure_parsed, find_source_files, relative_path
+from vibeforcer.lint._helpers import ParsedFile, ensure_parsed, find_source_files
 
 _URL_RE = re.compile(r"https?://")
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from pathlib import Path
+from time import monotonic
 
+from vibeforcer._types import ObjectDict
 from vibeforcer.adapters import get_adapter
 from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.config import is_path_skipped, is_repo_disabled
@@ -11,6 +14,7 @@ from vibeforcer.enrichment import enrich_findings
 from vibeforcer.models import EngineResult, RuleFinding, Severity
 from vibeforcer.rules import build_rules
 from vibeforcer.rules.base import Rule
+from vibeforcer.util import warning
 
 
 DECISION_ORDER: dict[str | None, int] = {
@@ -76,16 +80,31 @@ def _serialize_findings(findings: list[RuleFinding]) -> list[dict[str, object]]:
     ]
 
 
-def _error_trace_payload(ctx: HookContext, platform: str, rule_id: str, exc: Exception) -> dict[str, object]:
-    """Build the trace payload dict for a rule evaluation error."""
+def _trace_identity(ctx: HookContext, platform: str) -> dict[str, object]:
     return {
         "platform": platform,
         "event_name": ctx.event_name,
         "session_id": ctx.session_id,
         "tool_name": ctx.tool_name,
-        "rule_id": rule_id,
-        "error": repr(exc),
     }
+
+
+def _error_trace_payload(
+    identity: dict[str, object],
+    rule_id: str,
+    exc: Exception,
+    elapsed_ms: float,
+) -> dict[str, object]:
+    """Build the trace payload dict for a rule evaluation error."""
+    payload = dict(identity)
+    payload.update(
+        {
+            "rule_id": rule_id,
+            "elapsed_ms": elapsed_ms,
+            "error": repr(exc),
+        }
+    )
+    return payload
 
 
 @dataclass(slots=True)
@@ -96,15 +115,19 @@ class _EvalAccumulator:
     errors: list[str] = field(default_factory=list)
 
 
-def _trace_findings(ctx: HookContext, platform: str, items: list[RuleFinding]) -> None:
+def _trace_findings(
+    ctx: HookContext,
+    platform: str,
+    items: list[RuleFinding],
+    elapsed_ms: float,
+) -> None:
+    identity = _trace_identity(ctx, platform)
     for item in items:
-        ctx.trace.rule(
+        payload = dict(identity)
+        payload.update(
             {
-                "platform": platform,
-                "event_name": ctx.event_name,
-                "session_id": ctx.session_id,
-                "tool_name": ctx.tool_name,
                 "rule_id": item.rule_id,
+                "elapsed_ms": elapsed_ms,
                 "severity": item.severity.as_name(),
                 "decision": item.decision,
                 "message": item.message,
@@ -112,6 +135,7 @@ def _trace_findings(ctx: HookContext, platform: str, items: list[RuleFinding]) -
                 "metadata": item.metadata,
             }
         )
+        ctx.trace.rule(payload)
 
 
 def _run_rule(
@@ -121,16 +145,27 @@ def _run_rule(
     acc: _EvalAccumulator,
 ) -> None:
     """Evaluate a single rule, collecting findings and errors."""
+    identity = _trace_identity(ctx, platform)
+    start = monotonic()
     try:
         result = rule.evaluate(ctx)
+        elapsed_ms = round((monotonic() - start) * 1000.0, 3)
         if not result:
             return
         _apply_severity_overrides(result, ctx.config.severity_overrides)
         acc.findings.extend(result)
-        _trace_findings(ctx, platform, result)
+        _trace_findings(ctx, platform, result, elapsed_ms)
     except Exception as exc:
+        elapsed_ms = round((monotonic() - start) * 1000.0, 3)
         acc.errors.append(f"{rule.rule_id}: {exc}")
-        ctx.trace.rule(_error_trace_payload(ctx, platform, rule.rule_id, exc))
+        warning(
+            "rule evaluation failed",
+            rule_id=rule.rule_id,
+            event_name=ctx.event_name,
+            tool_name=ctx.tool_name,
+            error=str(exc),
+        )
+        ctx.trace.rule(_error_trace_payload(identity, rule.rule_id, exc, elapsed_ms))
 
 
 def _safe_enrich(
@@ -139,11 +174,36 @@ def _safe_enrich(
     acc: _EvalAccumulator,
 ) -> None:
     """Run enrichment with error capture instead of silent swallow."""
+    identity = _trace_identity(ctx, platform)
+    findings_before = len(acc.findings)
+    start = monotonic()
     try:
         enrich_findings(acc.findings, ctx)
+        elapsed_ms = round((monotonic() - start) * 1000.0, 3)
+        findings_after = len(acc.findings)
+        payload = dict(identity)
+        payload.update(
+            {
+                "rule_id": "ENRICHMENT",
+                "elapsed_ms": elapsed_ms,
+                "metadata": {
+                    "findings_before": findings_before,
+                    "findings_after": findings_after,
+                    "findings_delta": findings_after - findings_before,
+                },
+            }
+        )
+        ctx.trace.rule(payload)
     except Exception as exc:
+        elapsed_ms = round((monotonic() - start) * 1000.0, 3)
         acc.errors.append(f"enrichment: {exc}")
-        ctx.trace.rule(_error_trace_payload(ctx, platform, "ENRICHMENT", exc))
+        warning(
+            "enrichment failed",
+            event_name=ctx.event_name,
+            tool_name=ctx.tool_name,
+            error=str(exc),
+        )
+        ctx.trace.rule(_error_trace_payload(identity, "ENRICHMENT", exc, elapsed_ms))
 
 
 def _run_rules(ctx: HookContext, platform: str) -> _EvalAccumulator:
@@ -161,7 +221,7 @@ def render_output(
     ctx: HookContext,
     findings: list[RuleFinding],
     adapter: PlatformAdapter | None = None,
-) -> dict[str, object] | None:
+) -> ObjectDict | None:
     if not findings:
         return None
 
@@ -178,7 +238,9 @@ def render_output(
 def _check_skip(ctx: HookContext, platform: str) -> EngineResult | None:
     """Return an early EngineResult if the repo is disabled or skipped."""
     repo_cwd = Path(ctx.cwd) if ctx.cwd else Path.cwd()
-    if not (is_repo_disabled(repo_cwd) or is_path_skipped(repo_cwd, ctx.config.skip_paths)):
+    if not (
+        is_repo_disabled(repo_cwd) or is_path_skipped(repo_cwd, ctx.config.skip_paths)
+    ):
         return None
     ctx.trace.result(
         {
@@ -194,7 +256,7 @@ def _check_skip(ctx: HookContext, platform: str) -> EngineResult | None:
 
 
 def evaluate_payload(
-    payload_dict: dict[str, object],
+    payload_dict: Mapping[str, object],
     platform: str = "claude",
 ) -> EngineResult:
     adapter = get_adapter(platform)

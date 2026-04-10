@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json as _json
+import re
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from typing_extensions import override
+
+from vibeforcer._types import bool_value, object_dict, string_value
+from vibeforcer.constants import SAFE_READ_SHELL_VERBS
 from vibeforcer.models import RuleFinding, Severity
-from vibeforcer.rules.base import Rule
+from vibeforcer.rules.base import Rule, is_rule_enabled
 
 if TYPE_CHECKING:
     from vibeforcer.context import HookContext
@@ -26,8 +31,16 @@ def _is_worktree(path_str: str) -> bool:
         p = Path(path_str).resolve()
         # Walk up to find the git toplevel
         result = subprocess.run(
-            ["git", "-C", str(p) if p.is_dir() else str(p.parent), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=3,
+            [
+                "git",
+                "-C",
+                str(p) if p.is_dir() else str(p.parent),
+                "rev-parse",
+                "--show-toplevel",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
         if result.returncode != 0:
             return False
@@ -39,13 +52,27 @@ def _is_worktree(path_str: str) -> bool:
         return False
 
 
+def _command_has_word(command: str, word: str) -> bool:
+    """Check if *word* appears as a standalone token in *command*."""
+    escaped = re.escape(word)
+    pattern = rf"(^|\s){escaped}(\s|$)"
+    return bool(re.search(pattern, command, re.IGNORECASE))
+
+
+def _is_safe_read_shell(command: str) -> bool:
+    lowered = command.lower()
+    if "sed -i" in lowered or "tee " in lowered or ">>" in lowered or " > " in lowered:
+        return False
+    return any(_command_has_word(lowered, verb) for verb in SAFE_READ_SHELL_VERBS)
+
+
 def _tail_read(file_path: Path, num_bytes: int) -> str:
     """Read the last *num_bytes* of a file as UTF-8 text."""
     with open(file_path, "rb") as fh:
         try:
-            fh.seek(-num_bytes, 2)
+            _ = fh.seek(-num_bytes, 2)
         except OSError:
-            fh.seek(0)
+            _ = fh.seek(0)
         return fh.read().decode("utf-8", errors="replace")
 
 
@@ -54,11 +81,19 @@ def _extract_content_text(msg: object) -> str:
     if isinstance(msg, str):
         return msg
     if isinstance(msg, list):
-        return " ".join(
-            block.get("text", "")
-            for block in msg
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
+        blocks = cast(list[object], msg)
+        extracted: list[str] = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            typed_block = cast(dict[str, object], block)
+            raw_type = typed_block.get("type")
+            if not isinstance(raw_type, str) or raw_type != "text":
+                continue
+            raw_text = typed_block.get("text")
+            if isinstance(raw_text, str):
+                extracted.append(raw_text)
+        return " ".join(extracted)
     return ""
 
 
@@ -73,13 +108,23 @@ def _last_assistant_response(transcript_path: str) -> str:
         return ""
     for line in reversed(tail.strip().splitlines()[-20:]):
         try:
-            entry = _json.loads(line)
+            raw_entry: object = cast(object, _json.loads(line))
         except _json.JSONDecodeError:
             continue
-        role = entry.get("type") or entry.get("role")
-        if role == "assistant":
-            msg = entry.get("message", {}).get("content", "")
-            return _extract_content_text(msg)
+        if not isinstance(raw_entry, dict):
+            continue
+        entry = cast(dict[str, object], raw_entry)
+        raw_type = entry.get("type")
+        raw_role_field = entry.get("role")
+        raw_role: object = raw_type if raw_type is not None else raw_role_field
+        if not isinstance(raw_role, str) or raw_role != "assistant":
+            continue
+        raw_msg_container = entry.get("message")
+        if not isinstance(raw_msg_container, dict):
+            continue
+        msg_container = cast(dict[str, object], raw_msg_container)
+        msg: object = msg_container.get("content", "")
+        return _extract_content_text(msg)
     return ""
 
 
@@ -110,13 +155,13 @@ _PREEXISTING_PHRASES = (
 class IgnorePreexistingRule(Rule):
     """Block responses that dismiss issues as pre-existing."""
 
-    rule_id = "STOP-001"
-    title = "Block ignoring pre-existing issues"
-    events = ("Stop", "SubagentStop")
+    rule_id: str = "STOP-001"
+    title: str = "Block ignoring pre-existing issues"
+    events: tuple[str, ...] = ("Stop", "SubagentStop")
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        enabled = ctx.config.enabled_rules.get(self.rule_id)
-        if enabled is not None and not enabled:
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         response = _get_stop_response(ctx)
         if not response:
@@ -142,26 +187,22 @@ class IgnorePreexistingRule(Rule):
 
 
 _QUALITY_REMINDER = (
-    "Before stopping: verify all tests pass and quality "
-    "gates are clean. Run `make quality` or the "
-    "project-specific quality command if available."
+    "Before stopping, verify tests pass and quality gates are clean. "
+    "Run `vibeforcer lint check` (or your project-specific quality "
+    "command) before finishing this task."
 )
 
 
-def _is_rule_on(ctx: HookContext, rule_id: str) -> bool:
-    enabled = ctx.config.enabled_rules.get(rule_id)
-    return enabled is None or bool(enabled)
-
-
-class RequireMakeQualityRule(Rule):
+class RequireQualityCheckRule(Rule):
     """Remind to run quality gate before stopping."""
 
-    rule_id = "STOP-002"
-    title = "Require make quality reminder"
-    events = ("Stop", "SubagentStop")
+    rule_id: str = "STOP-002"
+    title: str = "Require quality check reminder"
+    events: tuple[str, ...] = ("Stop", "SubagentStop")
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         return [
             RuleFinding(
@@ -176,13 +217,14 @@ class RequireMakeQualityRule(Rule):
 class WarnLargeFileRule(Rule):
     """Warn when editing files that are suspiciously large."""
 
-    rule_id = "WARN-LARGE-001"
-    title = "Warn on large file"
-    events = ("PreToolUse", "PermissionRequest")
-    MAX_CHARS = 50_000
+    rule_id: str = "WARN-LARGE-001"
+    title: str = "Warn on large file"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
+    MAX_CHARS: int = 50_000
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         findings: list[RuleFinding] = []
         for target in ctx.content_targets:
@@ -211,8 +253,10 @@ class WarnLargeFileRule(Rule):
 _READ_TOOLS = frozenset({"read", "grep", "glob"})
 
 _INFRA_FRAGMENTS = (
-    "hook-layer/config.json", "hook_layer/",
-    "vibeforcer/", ".claude/hooks/",
+    "hook-layer/config.json",
+    "hook_layer/",
+    "vibeforcer/",
+    ".claude/hooks/",
 )
 
 _CONFIG_FRAGMENTS = (
@@ -225,7 +269,6 @@ def _is_safe_bash_for_path(ctx: HookContext) -> bool:
     """Return True if the bash command is a safe read-only operation."""
     if not ctx.tool_name or ctx.tool_name.lower() != "bash":
         return False
-    from vibeforcer.rules.common import _is_safe_read_shell
     return _is_safe_read_shell(ctx.bash_command.lower())
 
 
@@ -234,6 +277,7 @@ def _is_modifying_tool(ctx: HookContext) -> bool:
     if ctx.tool_name and ctx.tool_name.lower() == "bash":
         return True
     from vibeforcer.util.payloads import is_edit_like_tool
+
     return is_edit_like_tool(ctx.tool_name)
 
 
@@ -286,12 +330,13 @@ def _check_infra_path(path_value: str, ctx: HookContext) -> list[RuleFinding] | 
 class HookInfraExecProtectionRule(Rule):
     """Block modification of hook layer infrastructure and config."""
 
-    rule_id = "GLOBAL-BUILTIN-HOOK-INFRA-EXEC"
-    title = "Hook layer execution protection"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "GLOBAL-BUILTIN-HOOK-INFRA-EXEC"
+    title: str = "Hook layer execution protection"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if ctx.tool_name and ctx.tool_name.lower() in _READ_TOOLS:
             return []
@@ -323,20 +368,25 @@ _SECURITY_PATTERNS = tuple(
 )
 
 _SECURITY_EXCLUDED = (
-    "hook_layer/", "vibeforcer/", "hook-layer/",
-    ".claude/hooks/", "test_", "fixture",
+    "hook_layer/",
+    "vibeforcer/",
+    "hook-layer/",
+    ".claude/hooks/",
+    "test_",
+    "fixture",
 )
 
 
 class RulebookSecurityRule(Rule):
     """Prevent disabling or weakening security guardrails."""
 
-    rule_id = "BUILTIN-RULEBOOK-SECURITY"
-    title = "Rulebook security guardrails"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "BUILTIN-RULEBOOK-SECURITY"
+    title: str = "Rulebook security guardrails"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         for target in ctx.content_targets:
             lowered = target.path.lower()
@@ -370,12 +420,9 @@ class RulebookSecurityRule(Rule):
 # ---------------------------------------------------------------------------
 
 _GIT_COMMANDS: list[tuple[list[str], str]] = [
-    (["git", "log", "--oneline", "-10"],
-     "## Recent commits\n```\n{output}\n```"),
-    (["git", "status", "--short"],
-     "## Working tree status\n```\n{output}\n```"),
-    (["git", "branch", "--show-current"],
-     "Current branch: `{output}`"),
+    (["git", "log", "--oneline", "-10"], "## Recent commits\n```\n{output}\n```"),
+    (["git", "status", "--short"], "## Working tree status\n```\n{output}\n```"),
+    (["git", "branch", "--show-current"], "Current branch: `{output}`"),
 ]
 
 
@@ -385,8 +432,11 @@ def _collect_git_context(cwd: str) -> list[str]:
     for cmd, template in _GIT_COMMANDS:
         try:
             result = subprocess.run(
-                cmd, cwd=cwd,
-                capture_output=True, text=True, timeout=5,
+                cmd,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
         except (OSError, subprocess.TimeoutExpired):
             continue
@@ -399,12 +449,13 @@ def _collect_git_context(cwd: str) -> list[str]:
 class SessionStartContextRule(Rule):
     """Inject project context on session start."""
 
-    rule_id = "SESSION-001"
-    title = "Session start context injection"
-    events = ("SessionStart",)
+    rule_id: str = "SESSION-001"
+    title: str = "Session start context injection"
+    events: tuple[str, ...] = ("SessionStart",)
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         fragments = _collect_git_context(str(ctx.cwd))
         if not fragments:
@@ -415,8 +466,7 @@ class SessionStartContextRule(Rule):
                 title=self.title,
                 severity=Severity.LOW,
                 additional_context=(
-                    "# Project Context (auto-injected)\n\n"
-                    + "\n\n".join(fragments)
+                    "# Project Context (auto-injected)\n\n" + "\n\n".join(fragments)
                 ),
             )
         ]
@@ -427,27 +477,30 @@ class SessionStartContextRule(Rule):
 # ---------------------------------------------------------------------------
 
 _CONFIG_BLOCKED_SOURCES = (
-    "project_settings", "local_settings", "user_settings",
+    "project_settings",
+    "local_settings",
+    "user_settings",
 )
 
 
 class ConfigChangeGuardRule(Rule):
     """Block config changes that weaken security."""
 
-    rule_id = "CONFIG-001"
-    title = "Config change guard"
-    events = ("ConfigChange",)
+    rule_id: str = "CONFIG-001"
+    title: str = "Config change guard"
+    events: tuple[str, ...] = ("ConfigChange",)
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_rule_on(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
-        source = ctx.payload.payload.get("source", "")
+        source = string_value(ctx.payload.payload.get("source")) or ""
         if source not in _CONFIG_BLOCKED_SOURCES:
             return []
-        changes = ctx.payload.payload.get("changes", {})
-        if not isinstance(changes, dict):
+        changes = object_dict(ctx.payload.payload.get("changes"))
+        if not changes:
             return []
-        if changes.get("disableAllHooks") is True:
+        if bool_value(changes.get("disableAllHooks")) is True:
             return [
                 RuleFinding(
                     rule_id=self.rule_id,

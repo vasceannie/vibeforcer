@@ -1,8 +1,10 @@
 """OpenCode adapter."""
+
 from __future__ import annotations
 
-from typing import Any
+from typing_extensions import override
 
+from vibeforcer._types import ObjectDict, ObjectMapping, object_dict, string_value
 from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.models import RuleFinding
 
@@ -16,15 +18,16 @@ OPENCODE_EVENT_MAP: dict[str, str] = {
 
 
 class OpenCodeAdapter(PlatformAdapter):
-    name = "opencode"
+    name: str = "opencode"
 
-    def normalize_payload(self, raw: dict[str, Any]) -> dict[str, Any]:
-        canonical = dict(raw)
-        oc_event = raw.get("hook_event_name", "")
+    @override
+    def normalize_payload(self, raw: ObjectMapping) -> ObjectDict:
+        canonical = object_dict(raw)
+        oc_event = string_value(raw.get("hook_event_name")) or ""
         canonical_event = OPENCODE_EVENT_MAP.get(oc_event, oc_event)
         canonical["hook_event_name"] = canonical_event
 
-        tool_name = raw.get("tool_name", "")
+        tool_name = string_value(raw.get("tool_name")) or ""
         if tool_name and tool_name[0].islower():
             canonical["tool_name"] = tool_name.capitalize()
 
@@ -35,15 +38,16 @@ class OpenCodeAdapter(PlatformAdapter):
 
         return canonical
 
+    @override
     def render_output(
         self,
         event_name: str,
         findings: list[RuleFinding],
         *,
         context: str | None = None,
-        updated_input: dict[str, Any] | None = None,
+        updated_input: ObjectDict | None = None,
         decision: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> ObjectDict | None:
         if not findings:
             return None
 
@@ -51,15 +55,15 @@ class OpenCodeAdapter(PlatformAdapter):
 
         if event_name == "PreToolUse":
             if decision in {"deny", "block"}:
-                result: dict[str, Any] = {
+                blocked_result: ObjectDict = {
                     "action": "block",
                     "reason": self.join_messages(
                         self.decision_findings(findings, decision)
                     ),
                 }
                 if context:
-                    result["context"] = context
-                return result
+                    blocked_result["context"] = context
+                return blocked_result
             if decision == "ask":
                 return {
                     "action": "block",
@@ -68,11 +72,11 @@ class OpenCodeAdapter(PlatformAdapter):
                     ),
                 }
             if decision == "allow" and updated_input:
-                result = {"action": "allow"}
-                result["updated_args"] = updated_input
+                allowed_result: ObjectDict = {"action": "allow"}
+                allowed_result["updated_args"] = updated_input
                 if context:
-                    result["context"] = context
-                return result
+                    allowed_result["context"] = context
+                return allowed_result
             if context:
                 return {"action": "context", "context": context}
             return None
@@ -90,7 +94,7 @@ class OpenCodeAdapter(PlatformAdapter):
             return None
 
         if event_name == "PostToolUse":
-            payload: dict[str, Any] = {}
+            payload: ObjectDict = {}
             if decision in {"block", "deny"}:
                 payload["action"] = "warn"
                 payload["reason"] = self.join_messages(

@@ -1,8 +1,16 @@
 """Codex CLI adapter."""
+
 from __future__ import annotations
 
-from typing import Any
+from typing_extensions import override
 
+from vibeforcer._types import (
+    ObjectDict,
+    ObjectMapping,
+    is_object_dict,
+    object_dict,
+    string_value,
+)
 from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.models import RuleFinding, Severity
 
@@ -10,20 +18,37 @@ CODEX_EVENTS = {"SessionStart", "PreToolUse", "PostToolUse", "UserPromptSubmit",
 
 
 class CodexAdapter(PlatformAdapter):
-    name = "codex"
+    name: str = "codex"
 
-    def normalize_payload(self, raw: dict[str, Any]) -> dict[str, Any]:
-        return raw
+    def _apply_block_decision(
+        self,
+        payload: dict[str, object],
+        findings: list[RuleFinding],
+        decision: str | None,
+    ) -> None:
+        if decision not in {"block", "deny", "ask"}:
+            return
+        payload["decision"] = "block"
+        payload["reason"] = self.join_messages(
+            self.decision_findings(findings, decision)
+        )
 
+    @override
+    def normalize_payload(self, raw: ObjectMapping) -> ObjectDict:
+        if is_object_dict(raw):
+            return raw
+        return object_dict(raw)
+
+    @override
     def render_output(
         self,
         event_name: str,
         findings: list[RuleFinding],
         *,
         context: str | None = None,
-        updated_input: dict[str, Any] | None = None,
+        updated_input: ObjectDict | None = None,
         decision: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> ObjectDict | None:
         if not findings:
             return None
         if event_name not in CODEX_EVENTS:
@@ -32,10 +57,8 @@ class CodexAdapter(PlatformAdapter):
         updated_input = updated_input or {}
 
         if event_name == "PreToolUse":
-            payload: dict[str, Any] = {
-                "hookSpecificOutput": {"hookEventName": "PreToolUse"}
-            }
-            specific = payload["hookSpecificOutput"]
+            specific: dict[str, object] = {"hookEventName": "PreToolUse"}
+            pretool_response: dict[str, object] = {"hookSpecificOutput": specific}
             if decision in {"deny", "ask", "allow"}:
                 specific["permissionDecision"] = decision
                 specific["permissionDecisionReason"] = self.join_messages(
@@ -50,31 +73,28 @@ class CodexAdapter(PlatformAdapter):
                 specific["additionalContext"] = context
             if updated_input:
                 specific["updatedInput"] = updated_input
-            return payload if len(specific) > 1 else None
+            return pretool_response if len(specific) > 1 else None
 
         if event_name == "PostToolUse":
             critical_blocks = [
-                f for f in findings
+                f
+                for f in findings
                 if f.decision == "block" and f.severity >= Severity.CRITICAL
             ]
             if critical_blocks:
-                payload: dict[str, Any] = {
+                critical_response: ObjectDict = {
                     "continue": False,
                     "stopReason": self.join_messages(critical_blocks),
                 }
                 if context:
-                    payload["hookSpecificOutput"] = {
+                    critical_response["hookSpecificOutput"] = {
                         "hookEventName": "PostToolUse",
                         "additionalContext": context,
                     }
-                return payload
+                return critical_response
 
-            payload = {}
-            if decision in {"block", "deny", "ask"}:
-                payload["decision"] = "block"
-                payload["reason"] = self.join_messages(
-                    self.decision_findings(findings, decision)
-                )
+            payload: dict[str, object] = {}
+            self._apply_block_decision(payload, findings, decision)
             if context:
                 payload["hookSpecificOutput"] = {
                     "hookEventName": "PostToolUse",
@@ -93,33 +113,25 @@ class CodexAdapter(PlatformAdapter):
             return None
 
         if event_name == "UserPromptSubmit":
-            payload = {}
-            if decision in {"block", "deny", "ask"}:
-                payload["decision"] = "block"
-                payload["reason"] = self.join_messages(
-                    self.decision_findings(findings, decision)
-                )
+            prompt_response: dict[str, object] = {}
+            self._apply_block_decision(prompt_response, findings, decision)
             if context:
-                payload["hookSpecificOutput"] = {
+                prompt_response["hookSpecificOutput"] = {
                     "hookEventName": "UserPromptSubmit",
                     "additionalContext": context,
                 }
-            return payload or None
+            return prompt_response or None
 
         if event_name == "Stop":
-            payload = {}
-            if decision in {"block", "deny", "ask"}:
-                payload["decision"] = "block"
-                payload["reason"] = self.join_messages(
-                    self.decision_findings(findings, decision)
-                )
-            if context and not payload.get("decision"):
-                payload["systemMessage"] = context
+            stop_response: dict[str, object] = {}
+            self._apply_block_decision(stop_response, findings, decision)
+            if context and not stop_response.get("decision"):
+                stop_response["systemMessage"] = context
             elif context:
-                existing = payload.get("reason", "")
-                payload["reason"] = (
+                existing = string_value(stop_response.get("reason"))
+                stop_response["reason"] = (
                     (existing + "\n\n" + context).strip() if existing else context
                 )
-            return payload or None
+            return stop_response or None
 
         return None

@@ -3,14 +3,19 @@
 Reads results.jsonl and produces human-readable or JSON reports.
 Replaces the standalone hook-stats.py script.
 """
+
 from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable, Mapping
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import cast
+
+from vibeforcer._types import ObjectDict, object_dict, object_list, string_value
 
 
 def _default_log_path() -> Path:
@@ -21,7 +26,16 @@ def _default_log_path() -> Path:
     if xdg.exists():
         return xdg
 
-    legacy = Path.home() / ".claude" / "hooks" / "enforcer" / ".claude" / "hook-layer" / "logs" / "results.jsonl"
+    legacy = (
+        Path.home()
+        / ".claude"
+        / "hooks"
+        / "enforcer"
+        / ".claude"
+        / "hook-layer"
+        / "logs"
+        / "results.jsonl"
+    )
     if legacy.exists():
         return legacy
 
@@ -38,8 +52,13 @@ def _parse_timestamp(ts_raw: str, cutoff: datetime | None) -> bool:
         return False
 
 
+parse_timestamp = _parse_timestamp
+
+
 def load_entries(path: Path, days: int | None) -> list[dict[str, object]]:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days) if days is not None else None
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=days) if days is not None else None
+    )
     entries: list[dict[str, object]] = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -47,8 +66,11 @@ def load_entries(path: Path, days: int | None) -> list[dict[str, object]]:
             if not stripped:
                 continue
             try:
-                entry = json.loads(stripped)
+                raw_entry = cast(object, json.loads(stripped))
             except json.JSONDecodeError:
+                continue
+            entry = object_dict(raw_entry)
+            if not entry:
                 continue
             ts = entry.get("timestamp", "")
             if isinstance(ts, str) and _parse_timestamp(ts, cutoff):
@@ -69,7 +91,9 @@ class _Counters:
     by_session: Counter[str] = field(default_factory=Counter)
     denies_by_file: Counter[str] = field(default_factory=Counter)
     denies_by_rule: Counter[str] = field(default_factory=Counter)
-    rule_examples: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
+    rule_examples: dict[str, list[str]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
     daily_counts: Counter[str] = field(default_factory=Counter)
     session_deny_seq: dict[str, list[tuple[str, str, str]]] = field(
         default_factory=lambda: defaultdict(list),
@@ -88,18 +112,19 @@ class _EntryContext:
 
 def _record_deny_metadata(meta: object, counters: _Counters) -> None:
     """Track file paths from a deny finding's metadata dict."""
-    if not isinstance(meta, dict):
+    meta_dict = object_dict(meta)
+    if not meta_dict:
         return
-    path_val = meta.get("path")
-    if isinstance(path_val, str):
+    path_val = string_value(meta_dict.get("path"))
+    if path_val is not None:
         counters.denies_by_file[path_val] += 1
-    for hit in meta.get("hits", []):
+    for hit in object_list(meta_dict.get("hits")):
         if isinstance(hit, str):
             counters.denies_by_file[hit] += 1
 
 
 def _process_finding(
-    finding: dict[str, object],
+    finding: ObjectDict,
     ectx: _EntryContext,
     counters: _Counters,
 ) -> bool:
@@ -124,16 +149,19 @@ def _process_finding(
     return True
 
 
-def _classify_findings(findings: list[object], ectx: _EntryContext, counters: _Counters) -> None:
+def _classify_findings(
+    findings: list[object], ectx: _EntryContext, counters: _Counters
+) -> None:
     """Process all findings and record an entry-level allow when nothing fired."""
     has_deny = False
     has_any_decision = False
     for finding in findings:
-        if not isinstance(finding, dict):
+        finding_dict = object_dict(finding)
+        if not finding_dict:
             continue
-        if _process_finding(finding, ectx, counters):
+        if _process_finding(finding_dict, ectx, counters):
             has_deny = True
-        if finding.get("decision") is not None:
+        if finding_dict.get("decision") is not None:
             has_any_decision = True
 
     if not findings or (not has_deny and not has_any_decision):
@@ -157,9 +185,9 @@ def _process_entry(entry: dict[str, object], counters: _Counters) -> None:
     if ts_str:
         counters.daily_counts[ts_str[:10]] += 1
 
-    findings = entry.get("findings", [])
+    findings = object_list(entry.get("findings"))
     ectx = _EntryContext(session=session, tool=tool, ts_str=ts_str)
-    _classify_findings(findings if isinstance(findings, list) else [], ectx, counters)
+    _classify_findings(findings, ectx, counters)
 
 
 def _compute_retry_patterns(counters: _Counters) -> Counter[str]:
@@ -172,7 +200,7 @@ def _compute_retry_patterns(counters: _Counters) -> Counter[str]:
     return retry_counts
 
 
-def analyze(entries: list[dict[str, object]]) -> dict[str, object]:
+def analyze(entries: list[dict[str, object]]) -> ObjectDict:
     counters = _Counters()
     for entry in entries:
         _process_entry(entry, counters)
@@ -201,13 +229,23 @@ def analyze(entries: list[dict[str, object]]) -> dict[str, object]:
 _PairList = list[tuple[str, int]]
 
 
-def _pairs(stats: dict[str, object], key: str) -> _PairList:
+def _as_pair_list(value: object) -> _PairList:
+    pairs: _PairList = []
+    for item in object_list(value):
+        seq_item = object_list(item)
+        if len(seq_item) == 2:
+            label, count = seq_item
+            if isinstance(label, str) and isinstance(count, int):
+                pairs.append((label, count))
+    return pairs
+
+
+def _pairs(stats: Mapping[str, object], key: str) -> _PairList:
     """Safely extract a list of (str, int) pairs from the stats dict."""
-    raw = stats.get(key, [])
-    return list(raw) if isinstance(raw, list) else []
+    return _as_pair_list(stats.get(key, []))
 
 
-def print_report(stats: dict[str, object]) -> None:
+def print_report(stats: Mapping[str, object]) -> None:
     print("=" * 70)
     print("VIBEFORCER HOOK ACTIVITY REPORT")
     print("=" * 70)
@@ -232,49 +270,62 @@ def print_report(stats: dict[str, object]) -> None:
     _print_denied_files(stats)
     _print_retry_patterns(stats)
     _print_daily_volume(stats)
-    _print_severity(stats)
+    _print_pairs_section(
+        title="Severity Breakdown",
+        pairs=_pairs(stats, "by_severity"),
+        formatter=lambda sev, count: f"  {sev:10s} {count:6,}",
+    )
 
 
-def _print_denied_rules(stats: dict[str, object]) -> None:
+def _print_denied_rules(stats: Mapping[str, object]) -> None:
     print("\n--- Top Denied Rules ---")
     examples = stats.get("rule_examples", {})
+    examples_dict = object_dict(examples)
     for rule, count in _pairs(stats, "top_rules_denied"):
         print(f"  {rule:25s} {count:5,}")
-        if isinstance(examples, dict):
-            exs = examples.get(rule, [])
-            if isinstance(exs, list) and exs:
-                print(f"    \u2514\u2500 e.g. {str(exs[0])[:100]}")
+        if examples_dict:
+            exs = object_list(examples_dict.get(rule))
+            if exs:
+                print(f"    └─ e.g. {str(exs[0])[:100]}")
 
 
-def _print_denied_files(stats: dict[str, object]) -> None:
+def _print_denied_files(stats: Mapping[str, object]) -> None:
     print("\n--- Top Denied Files ---")
     for path, count in _pairs(stats, "top_files_denied"):
         short = str(path).replace(str(Path.home()), "~")
         print(f"  {count:4,}  {short}")
 
 
-def _print_retry_patterns(stats: dict[str, object]) -> None:
-    print("\n--- Retry Patterns (same rule denied 2+ in one session) ---")
+def _print_pairs_section(
+    title: str,
+    pairs: _PairList,
+    formatter: Callable[[str, int], str],
+    empty_message: str | None = None,
+) -> None:
+    print(f"\n--- {title} ---")
+    if pairs:
+        for label, count in pairs:
+            print(formatter(label, count))
+    elif empty_message is not None:
+        print(f"  {empty_message}")
+    print()
+
+
+def _print_retry_patterns(stats: Mapping[str, object]) -> None:
     patterns = _pairs(stats, "retry_patterns")
-    if patterns:
-        for desc, count in patterns:
-            print(f"  {count:3,}x  {desc}")
-    else:
-        print("  (none detected)")
+    _print_pairs_section(
+        title="Retry Patterns (same rule denied 2+ in one session)",
+        pairs=patterns,
+        formatter=lambda desc, count: f"  {count:3,}x  {desc}",
+        empty_message="(none detected)",
+    )
 
 
-def _print_daily_volume(stats: dict[str, object]) -> None:
+def _print_daily_volume(stats: Mapping[str, object]) -> None:
     print("\n--- Daily Volume ---")
     for day, count in _pairs(stats, "daily_counts")[-14:]:
         bar = "\u2588" * min(count // 50, 60)
         print(f"  {day}  {count:5,}  {bar}")
-
-
-def _print_severity(stats: dict[str, object]) -> None:
-    print("\n--- Severity Breakdown ---")
-    for sev, count in _pairs(stats, "by_severity"):
-        print(f"  {sev:10s} {count:6,}")
-    print()
 
 
 def run_stats(

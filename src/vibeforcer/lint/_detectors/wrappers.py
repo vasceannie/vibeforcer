@@ -3,6 +3,7 @@
 A "thin wrapper" is a function whose body is a single ``return other_func(…)``
 call that passes through all of its arguments unchanged.
 """
+
 from __future__ import annotations
 
 import ast
@@ -13,7 +14,9 @@ from vibeforcer.lint._config import get_config
 from vibeforcer.lint._helpers import find_source_files, relative_path, safe_parse
 
 
-def _is_simple_delegation(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
+def _is_simple_delegation(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
     """If *func_node* is a thin wrapper, return the delegated call as a string.
 
     Returns ``None`` if the function does meaningful work beyond delegation.
@@ -44,7 +47,7 @@ def _is_simple_delegation(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> 
         return None
 
     # Build the callee name
-    callee = _call_name(call)
+    callee = call_name(call)
     if not callee:
         return None
 
@@ -73,7 +76,7 @@ def _is_simple_delegation(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> 
     return callee
 
 
-def _call_name(call: ast.Call) -> str:
+def call_name(call: ast.Call) -> str:
     """Extract a dotted name from a Call node."""
     func = call.func
     if isinstance(func, ast.Name):
@@ -114,7 +117,7 @@ def detect_unnecessary_wrappers(files: list[Path] | None = None) -> list[Violati
             callee = _is_simple_delegation(node)
             if callee is None:
                 continue
-            if (node.name, callee) in allowed:
+            if str((node.name, callee)) in allowed:
                 continue
             violations.append(
                 Violation(

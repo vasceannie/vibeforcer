@@ -7,6 +7,7 @@
 - ``detect_silent_fallback``:  ``except`` that returns ``datetime.now()`` or
   ``datetime.utcnow()``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -19,7 +20,6 @@ from vibeforcer.lint._helpers import (
     enclosing_function,
     ensure_parsed,
     find_source_files,
-    relative_path,
 )
 
 
@@ -27,24 +27,29 @@ from vibeforcer.lint._helpers import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_LOGGING_NAMES = frozenset({
-    "debug", "info", "warning", "error", "critical", "exception",
-    "log", "warn",
-})
+_LOGGING_NAMES = frozenset(
+    {
+        "debug",
+        "info",
+        "warning",
+        "error",
+        "critical",
+        "exception",
+        "log",
+        "warn",
+    }
+)
 
 
 def _is_logging_call(node: ast.stmt) -> bool:
     """True when *node* is a logging call like ``logger.info(...)``."""
-    if not isinstance(node, ast.Expr):
-        return False
-    if not isinstance(node.value, ast.Call):
-        return False
-    func = node.value.func
-    if isinstance(func, ast.Attribute) and func.attr in _LOGGING_NAMES:
-        return True
-    if isinstance(func, ast.Name) and func.id in _LOGGING_NAMES:
-        return True
-    return False
+    match node:
+        case ast.Expr(value=ast.Call(func=ast.Attribute(attr=attr_name))):
+            return attr_name in _LOGGING_NAMES
+        case ast.Expr(value=ast.Call(func=ast.Name(id=func_name))):
+            return func_name in _LOGGING_NAMES
+        case _:
+            return False
 
 
 def _is_default_return(node: ast.stmt) -> bool:
@@ -70,20 +75,19 @@ def _is_broad_except(handler: ast.ExceptHandler) -> bool:
     """True for ``except Exception``, ``except BaseException``, bare ``except:``,
     and tuple forms like ``except (Exception, ValueError):``.
     """
-    if handler.type is None:
-        return True  # bare except
-    if isinstance(handler.type, ast.Name) and handler.type.id in (
-        "Exception", "BaseException",
-    ):
-        return True
-    # Tuple form: except (Exception, SomeError):
-    if isinstance(handler.type, ast.Tuple):
-        for elt in handler.type.elts:
-            if isinstance(elt, ast.Name) and elt.id in (
-                "Exception", "BaseException",
-            ):
-                return True
-    return False
+    broad_names = {"Exception", "BaseException"}
+    match handler.type:
+        case None:
+            return True  # bare except
+        case ast.Name(id=exc_name):
+            return exc_name in broad_names
+        case ast.Tuple(elts=elements):
+            return any(
+                isinstance(element, ast.Name) and element.id in broad_names
+                for element in elements
+            )
+        case _:
+            return False
 
 
 def _body_is_swallow(body: list[ast.stmt]) -> bool:
@@ -106,6 +110,7 @@ def _body_is_swallow(body: list[ast.stmt]) -> bool:
 # ---------------------------------------------------------------------------
 # detect_broad_except_swallow
 # ---------------------------------------------------------------------------
+
 
 def detect_broad_except_swallow(
     files: list[Path] | list[ParsedFile] | None = None,
@@ -140,6 +145,7 @@ def detect_broad_except_swallow(
 # ---------------------------------------------------------------------------
 # detect_silent_fallback
 # ---------------------------------------------------------------------------
+
 
 def _is_datetime_now_return(node: ast.stmt) -> bool:
     """True if *node* is ``return datetime.now()`` or ``return datetime.utcnow()``.
@@ -206,6 +212,7 @@ def detect_silent_fallback(
 # detect_silent_except
 # ---------------------------------------------------------------------------
 
+
 def _is_silent_body(body: list["ast.stmt"]) -> str | None:
     """Classify silent handler bodies.  Returns a label or *None*.
 
@@ -237,7 +244,11 @@ def _is_silent_body(body: list["ast.stmt"]) -> str | None:
                 return "return-none"
             if isinstance(val, ast.Constant) and val.value in (False, 0, ""):
                 return "return-default"
-            if isinstance(val, (ast.Dict, ast.List)) and not getattr(val, "keys", None) and not getattr(val, "elts", None):
+            if (
+                isinstance(val, (ast.Dict, ast.List))
+                and not getattr(val, "keys", None)
+                and not getattr(val, "elts", None)
+            ):
                 return "return-default"
         # <var> = None
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:

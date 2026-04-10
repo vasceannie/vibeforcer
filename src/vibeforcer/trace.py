@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import final
+
+from vibeforcer.util import warning
 
 
 def _make_record(payload: dict[str, object]) -> str:
@@ -14,6 +17,10 @@ def _make_record(payload: dict[str, object]) -> str:
     return json.dumps(record, sort_keys=True, default=str)
 
 
+make_record = _make_record
+
+
+@final
 class TraceWriter:
     def __init__(self, trace_dir: Path) -> None:
         self.trace_dir = trace_dir
@@ -25,8 +32,9 @@ class TraceWriter:
         line = _make_record(payload)
         try:
             with target.open("a", encoding="utf-8") as handle:
-                handle.write(line + "\n")
-        except OSError:
+                _ = handle.write(line + "\n")
+        except OSError as exc:
+            warning("trace write failed", path=str(target), error=str(exc))
             return
 
     def event(self, payload: dict[str, object]) -> None:

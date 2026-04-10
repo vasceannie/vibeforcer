@@ -1,4 +1,5 @@
-"""vibeforcer search — semantic code search via islands."""
+"""Semantic code search isolated from rule, engine, lint, and enrichment runtime code."""
+
 from __future__ import annotations
 
 __all__ = [

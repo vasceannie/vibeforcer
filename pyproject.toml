@@ -43,6 +43,23 @@ vibeforcer = ["resources/**/*"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+[tool.basedpyright]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests"]
+extraPaths = ["src", "."]
+typeCheckingMode = "strict"
+
+[tool.pyrefly]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests"]
+search_path = ["src", "."]
+disable-search-path-heuristics = true
+typeCheckingMode = "strict"
+
 [dependency-groups]
 dev = [
     "basedpyright>=1.39.0",

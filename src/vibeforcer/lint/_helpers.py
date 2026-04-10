@@ -1,10 +1,12 @@
 """Shared helpers for quality-gate detectors and tests."""
+
 from __future__ import annotations
 
 import ast
 import fnmatch
 import os
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from vibeforcer.lint._config import get_config
 # ---------------------------------------------------------------------------
 # Derived paths (resolved once via config singleton)
 # ---------------------------------------------------------------------------
+
 
 def _cfg():
     return get_config()
@@ -35,6 +38,7 @@ def tests_root() -> Path:
 # File discovery
 # ---------------------------------------------------------------------------
 
+
 def _is_excluded_dir(name: str) -> bool:
     return name in _cfg().exclude_dirs
 
@@ -51,36 +55,30 @@ def _scope() -> str:
     return os.environ.get("QUALITY_SCOPE", _cfg().default_scope)
 
 
-def _changed_files() -> set[Path]:
-    """Return files changed since last commit (unstaged + staged)."""
+def _git_diff_paths(*args: str) -> set[Path]:
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", *args],
             capture_output=True,
             text=True,
             cwd=project_root(),
             check=False,
         )
-        paths = {project_root() / p.strip() for p in result.stdout.splitlines() if p.strip()}
     except FileNotFoundError:
-        paths = set()
-    return paths
+        return set()
+
+    root = project_root()
+    return {root / item.strip() for item in result.stdout.splitlines() if item.strip()}
+
+
+def _changed_files() -> set[Path]:
+    """Return files changed since last commit (unstaged + staged)."""
+    return _git_diff_paths("diff", "--name-only", "HEAD")
 
 
 def _staged_files() -> set[Path]:
     """Return files staged for commit."""
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            capture_output=True,
-            text=True,
-            cwd=project_root(),
-            check=False,
-        )
-        paths = {project_root() / p.strip() for p in result.stdout.splitlines() if p.strip()}
-    except FileNotFoundError:
-        paths = set()
-    return paths
+    return _git_diff_paths("diff", "--cached", "--name-only")
 
 
 def _scope_filter() -> set[Path] | None:
@@ -107,7 +105,9 @@ def _walk_python_files(root: Path) -> list[Path]:
             if _is_excluded_file(fn):
                 continue
             full = Path(dirpath) / fn
-            if scope_set is not None and full.resolve() not in {p.resolve() for p in scope_set}:
+            if scope_set is not None and full.resolve() not in {
+                p.resolve() for p in scope_set
+            }:
                 continue
             results.append(full)
     return sorted(results)
@@ -132,6 +132,7 @@ def find_all_python_files() -> list[Path]:
 # Path helpers
 # ---------------------------------------------------------------------------
 
+
 def relative_path(p: Path) -> str:
     """Return a POSIX relative path string from the project root."""
     try:
@@ -143,6 +144,7 @@ def relative_path(p: Path) -> str:
 # ---------------------------------------------------------------------------
 # AST helpers
 # ---------------------------------------------------------------------------
+
 
 def safe_parse(path: Path) -> ast.Module | None:
     """Parse a Python file, returning None on syntax errors."""
@@ -207,6 +209,7 @@ def count_methods(node: ast.ClassDef) -> int:
 # ParsedFile — parse-once infrastructure
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ParsedFile:
     """A Python file pre-parsed for efficient multi-detector scanning.
@@ -251,7 +254,8 @@ def compute_string_line_ranges(tree: ast.Module) -> set[int]:
             and hasattr(node, "lineno")
             and hasattr(node, "end_lineno")
         ):
-            for ln in range(node.lineno, node.end_lineno + 1):
+            end_line = node.end_lineno if node.end_lineno is not None else node.lineno
+            for ln in range(node.lineno, end_line + 1):
                 string_lines.add(ln)
     return string_lines
 
@@ -302,7 +306,7 @@ def enclosing_function(
 
 
 def ensure_parsed(
-    files: list[object] | None,
+    files: Sequence[Path | ParsedFile] | None,
     fallback: list[Path] | None = None,
 ) -> list[ParsedFile]:
     """Accept raw ``Path`` list, ``ParsedFile`` list, or ``None``.

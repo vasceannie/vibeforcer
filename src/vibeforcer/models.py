@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Any
+from .policy_defaults import RUNTIME_POLICY_DEFAULTS
+from ._types import ObjectDict
 
 
 class Severity(IntEnum):
@@ -36,8 +37,8 @@ class RuleFinding:
     decision: str | None = None
     message: str | None = None
     additional_context: str | None = None
-    updated_input: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    updated_input: ObjectDict = field(default_factory=dict)
+    metadata: ObjectDict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -84,16 +85,26 @@ class RuntimeConfig:
     async_jobs_enabled: bool
     async_jobs_commands: dict[str, list[str]]
     # -- quality_gate.toml overrides --
-    python_max_complexity: int = 10
-    python_max_nesting_depth: int = 4
-    python_max_god_class_methods: int = 10
-    python_max_line_length: int = 120
-    python_feature_envy_threshold: float = 0.60
-    python_feature_envy_min_accesses: int = 6
-    python_import_fanout_limit: int = 5
+    python_max_complexity: int = int(RUNTIME_POLICY_DEFAULTS["max_complexity"])
+    python_max_nesting_depth: int = int(RUNTIME_POLICY_DEFAULTS["max_nesting_depth"])
+    python_max_god_class_methods: int = int(
+        RUNTIME_POLICY_DEFAULTS["max_god_class_methods"]
+    )
+    python_max_line_length: int = int(RUNTIME_POLICY_DEFAULTS["max_line_length"])
+    python_feature_envy_threshold: float = float(
+        RUNTIME_POLICY_DEFAULTS["feature_envy_threshold"]
+    )
+    python_feature_envy_min_accesses: int = int(
+        RUNTIME_POLICY_DEFAULTS["feature_envy_min_accesses"]
+    )
+    python_import_fanout_limit: int = int(
+        RUNTIME_POLICY_DEFAULTS["import_fanout_limit"]
+    )
     # Global skip / per-repo exception support
     skip_paths: list[str] = field(default_factory=list)
-    skip_if_file_exists: list[str] = field(default_factory=lambda: [".noqualitygate", ".no-quality-gate"])
+    skip_if_file_exists: list[str] = field(
+        default_factory=lambda: [".noqualitygate", ".no-quality-gate"]
+    )
     disabled_rules: list[str] = field(default_factory=list)
     severity_overrides: dict[str, str] = field(default_factory=dict)
     enabled_rules: dict[str, bool] = field(default_factory=dict)
@@ -104,5 +115,5 @@ class RuntimeConfig:
 class EngineResult:
     event_name: str
     findings: list[RuleFinding] = field(default_factory=list)
-    output: dict[str, Any] | None = None
+    output: ObjectDict | None = None
     errors: list[str] = field(default_factory=list)

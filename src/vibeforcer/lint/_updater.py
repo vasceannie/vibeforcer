@@ -4,17 +4,42 @@
 without overwriting user-customised values.  New keys are injected at
 the end of their existing section; entirely new sections are appended.
 """
+
 from __future__ import annotations
 
+import importlib
 import re
 from pathlib import Path
+from typing import Protocol, cast
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib  # type: ignore[no-redef]
+
+class _TomlParserModule(Protocol):
+    def loads(self, text: str) -> object: ...
+
+
+_toml_parser_module: _TomlParserModule | None = None
+for module_name in ("tomllib", "tomli"):
+    try:
+        _module = importlib.import_module(module_name)
+    except ModuleNotFoundError:
+        continue
+    if callable(getattr(_module, "loads", None)):
+        _toml_parser_module = cast(_TomlParserModule, cast(object, _module))
+        break
 
 from vibeforcer.lint import __version__
+from vibeforcer.policy_defaults import (
+    LINT_DEPRECATED_PATTERNS_DEFAULTS,
+    LINT_EXCEPTION_SAFETY_DEFAULTS,
+    LINT_MAGIC_DEFAULTS,
+    LINT_PATH_DEFAULTS,
+    LINT_LOGGING_DEFAULTS,
+    LINT_SCOPE_DEFAULTS,
+    LINT_TESTING_DEFAULTS,
+    LINT_THRESHOLD_DEFAULTS,
+    LINT_TYPE_SAFETY_DEFAULTS,
+    LINT_WRAPPERS_DEFAULTS,
+)
 
 # ---------------------------------------------------------------------------
 # Canonical defaults — single source of truth
@@ -25,90 +50,106 @@ CANONICAL_DEFAULTS: dict[str, dict[str, object]] = {
         "version": __version__,
     },
     "paths": {
-        "src": "src",
-        "tests": "tests",
-        "exclude_dirs": [".venv", "__pycache__", "node_modules", ".git"],
-        "exclude_patterns": ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"],
+        **LINT_PATH_DEFAULTS,
+        "exclude_dirs": list(LINT_PATH_DEFAULTS["exclude_dirs"]),
+        "exclude_patterns": list(LINT_PATH_DEFAULTS["exclude_patterns"]),
     },
     "thresholds": {
-        "max_complexity": 12,
-        "max_params": 4,
-        "max_method_lines": 50,
-        "max_test_lines": 35,
-        "max_module_lines_soft": 350,
-        "max_module_lines_hard": 600,
-        "max_nesting_depth": 4,
-        "max_god_class_methods": 15,
-        "max_god_class_lines": 400,
-        "max_eager_test_calls": 7,
-        "max_repeated_magic_numbers": 5,
-        "max_repeated_string_literals": 10,
-        "max_scattered_helpers": 5,
-        "max_duplicate_helper_signatures": 10,
-        "max_repeated_code_patterns": 50,
-        "min_function_body_lines": 5,
-        "min_call_sequence_length": 3,
-        "max_line_length": 120,
-        "feature_envy_threshold": 0.60,
-        "feature_envy_min_accesses": 6,
+        **LINT_THRESHOLD_DEFAULTS,
     },
     "magic_values": {
-        "allowed_numbers": [0, 1, 2, 3, 4, 5, -1, 10, 100, 200, 255, 1000, 1024, 0.5],
-        "allowed_strings": [
-            "", " ", "\n", "\t", "utf-8",
-            "r", "w", "rb", "wb",
-            "GET", "POST", "PUT", "DELETE", "PATCH",
-            "id", "name", "type", "value", "text", "status",
-        ],
+        "allowed_numbers": list(LINT_MAGIC_DEFAULTS["allowed_numbers"]),
+        "allowed_strings": list(LINT_MAGIC_DEFAULTS["allowed_strings"]),
     },
     "wrappers": {
-        "allowed": [],
+        "allowed": list(LINT_WRAPPERS_DEFAULTS["allowed"]),
     },
     "logging": {
-        "logger_function": "",
-        "logger_variable": "logger",
-        "infrastructure_path": "",
-        "disallowed_names": ["_log", "_logger", "log", "LOG"],
+        **LINT_LOGGING_DEFAULTS,
+        "disallowed_names": list(LINT_LOGGING_DEFAULTS["disallowed_names"]),
     },
     "type_safety": {
-        "ban_any": True,
-        "ban_type_suppressions": True,
-        "suppression_patterns": [
-            r"(?i)#\s*type:\s*ignore",
-            r"(?i)#\s*pyright:\s*ignore",
-            r"(?i)#\s*pyre-ignore",
-            r"(?i)#\s*noqa\b",
-        ],
+        **LINT_TYPE_SAFETY_DEFAULTS,
+        "suppression_patterns": list(LINT_TYPE_SAFETY_DEFAULTS["suppression_patterns"]),
     },
     "exception_safety": {
-        "ban_broad_except_swallow": True,
-        "ban_silent_except": True,
-        "ban_silent_fallback": True,
+        **LINT_EXCEPTION_SAFETY_DEFAULTS,
     },
-    "test_smells": {
-        "max_consecutive_bare_asserts": 3,
-        "ban_conditional_assertions": True,
-        "ban_fixtures_outside_conftest": True,
-    },
+    "test_smells": {**LINT_TESTING_DEFAULTS},
     "deprecated_patterns": {
         "patterns": [
-            ["from typing import Optional", "Optional[X] → X | None"],
-            ["from typing import Union", "Union[X, Y] → X | Y"],
-            [r"from typing import List\b", "List[X] → list[X]"],
-            [r"from typing import Dict\b", "Dict[K, V] → dict[K, V]"],
-            [r"from typing import Tuple\b", "Tuple[X] → tuple[X]"],
-            [r"from typing import Set\b", "Set[X] → set[X]"],
+            list(entry) for entry in LINT_DEPRECATED_PATTERNS_DEFAULTS["patterns"]
         ],
     },
     "scope": {
-        "default": "all",
+        "default": LINT_SCOPE_DEFAULTS["default"],
     },
 }
+
+
+def render_quality_gate_toml(*, version: str | None = None) -> str:
+    """Render a canonical quality-gate TOML body from defaults.
+
+    This keeps ``vibeforcer lint init`` coupled to the central defaults.
+    """
+    defaults = CANONICAL_DEFAULTS
+    if version is not None:
+        defaults = dict(defaults)
+        quality_gate = dict(defaults["quality_gate"])
+        quality_gate["version"] = version
+        defaults["quality_gate"] = quality_gate
+
+    lines: list[str] = [
+        "# Quality Gate Configuration",
+        "# vibeforcer lint",
+        "",
+    ]
+    for section, keys in defaults.items():
+        lines.append(f"[{section}]")
+        for key, value in keys.items():
+            lines.append(f"{key} = {_toml_value(value)}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
 # TOML serialisation helpers (stdlib has no tomllib writer)
 # ---------------------------------------------------------------------------
+
+
+def _toml_str(v: str) -> str:
+    """Serialize a string to TOML syntax."""
+    escaped = v.encode("unicode_escape").decode("ascii").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _toml_list_of_lists(v: list[object]) -> str:
+    """Serialize a list-of-lists (e.g. deprecated_patterns) to TOML syntax."""
+    lines = ["["]
+    for item in v:
+        typed_item = cast(list[object], item)
+        inner = ", ".join(_toml_value(x) for x in typed_item)
+        lines.append(f"    [{inner}],")
+    lines.append("]")
+    return "\n".join(lines)
+
+
+def _toml_list(v: list[object]) -> str:
+    """Serialize a list to TOML syntax."""
+    if not v:
+        return "[]"
+    if all(isinstance(item, list) for item in v):
+        return _toml_list_of_lists(v)
+    if len(v) <= 6 and all(isinstance(x, (int, float)) for x in v):
+        inner = ", ".join(_toml_value(x) for x in v)
+        return f"[{inner}]"
+    lines = ["["]
+    for item in v:
+        lines.append(f"    {_toml_value(item)},")
+    lines.append("]")
+    return "\n".join(lines)
+
 
 def _toml_value(v: object) -> str:
     """Serialize a single value to TOML syntax."""
@@ -119,28 +160,9 @@ def _toml_value(v: object) -> str:
     if isinstance(v, float):
         return str(v)
     if isinstance(v, str):
-        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
+        return _toml_str(v)
     if isinstance(v, list):
-        if not v:
-            return "[]"
-        # List of lists (e.g. deprecated_patterns)
-        if v and isinstance(v[0], list):
-            lines = ["["]
-            for item in v:
-                inner = ", ".join(_toml_value(x) for x in item)
-                lines.append(f"    [{inner}],")
-            lines.append("]")
-            return "\n".join(lines)
-        # Short numeric lists inline
-        if len(v) <= 6 and all(isinstance(x, (int, float)) for x in v):
-            inner = ", ".join(_toml_value(x) for x in v)
-            return f"[{inner}]"
-        lines = ["["]
-        for item in v:
-            lines.append(f"    {_toml_value(item)},")
-        lines.append("]")
-        return "\n".join(lines)
+        return _toml_list(cast(list[object], v))
     return repr(v)
 
 
@@ -155,6 +177,7 @@ def _render_keys(keys: dict[str, object]) -> list[str]:
 # ---------------------------------------------------------------------------
 # Diff logic
 # ---------------------------------------------------------------------------
+
 
 def diff_config(existing: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
     """Return only the keys/sections missing from *existing*."""
@@ -209,7 +232,59 @@ def _find_section_ranges(lines: list[str]) -> dict[str, tuple[int, int]]:
 # In-place merge
 # ---------------------------------------------------------------------------
 
-def update_toml_file(path: Path, *, dry_run: bool = False) -> dict[str, dict[str, object]]:
+
+def _parse_existing(text: str) -> dict[str, dict[str, object]] | None:
+    """Parse the TOML text and return a typed dict, or None on failure."""
+    if _toml_parser_module is None:
+        return None
+    raw = _toml_parser_module.loads(text)
+    if not isinstance(raw, dict):
+        return None
+    typed_raw = cast(object, raw)
+    return cast(dict[str, dict[str, object]], typed_raw)
+
+
+def _build_injection_plan(
+    missing: dict[str, dict[str, object]],
+    ranges: dict[str, tuple[int, int]],
+) -> tuple[list[tuple[int, list[str]]], list[str]]:
+    """Partition missing keys into in-place injections and new-section appends."""
+    inject_existing: list[tuple[int, list[str]]] = []
+    append_new: list[str] = []
+    for section, keys in missing.items():
+        if section in ranges:
+            _, end_idx = ranges[section]
+            inject_existing.append((end_idx, _render_keys(keys)))
+        else:
+            append_new.append("")
+            append_new.append(f"[{section}]")
+            append_new.extend(_render_keys(keys))
+    return inject_existing, append_new
+
+
+def _apply_injections(
+    lines: list[str], inject_existing: list[tuple[int, list[str]]]
+) -> None:
+    """Insert new key lines into *lines* at the correct positions (in reverse order)."""
+    inject_existing.sort(key=lambda x: x[0], reverse=True)
+    for after_idx, new_lines in inject_existing:
+        for i, nl in enumerate(new_lines):
+            lines.insert(after_idx + 1 + i, nl)
+
+
+def _write_updated(path: Path, lines: list[str], append_new: list[str]) -> None:
+    """Extend *lines* with any new sections and write the result to *path*."""
+    if append_new:
+        lines.extend(append_new)
+    new_text = "\n".join(lines)
+    if not new_text.endswith("\n"):
+        new_text += "\n"
+    _ = path.write_text(new_text, encoding="utf-8")
+
+
+def update_toml_file(
+    path: Path, *, dry_run: bool = False
+) -> dict[str, dict[str, object]]:
     """Merge missing defaults into an existing quality_gate.toml.
 
     - New keys for existing sections are injected at the end of that section.
@@ -219,7 +294,9 @@ def update_toml_file(path: Path, *, dry_run: bool = False) -> dict[str, dict[str
     Returns the dict of keys that were (or would be) added.
     """
     text = path.read_text(encoding="utf-8")
-    existing = tomllib.loads(text)
+    existing = _parse_existing(text)
+    if existing is None:
+        return {}
 
     missing = diff_config(existing)
     if not missing or dry_run:
@@ -227,36 +304,7 @@ def update_toml_file(path: Path, *, dry_run: bool = False) -> dict[str, dict[str
 
     lines = text.splitlines()
     ranges = _find_section_ranges(lines)
-
-    # Process existing sections: inject keys at the section end.
-    # Work backwards so line indices stay valid after insertions.
-    inject_existing: list[tuple[int, list[str]]] = []
-    append_new_sections: list[str] = []
-
-    for section, keys in missing.items():
-        if section in ranges:
-            _, end_idx = ranges[section]
-            inject_lines = _render_keys(keys)
-            inject_existing.append((end_idx, inject_lines))
-        else:
-            # Entirely new section
-            append_new_sections.append("")
-            append_new_sections.append(f"[{section}]")
-            append_new_sections.extend(_render_keys(keys))
-
-    # Sort injections by position descending so earlier inserts don't shift later ones
-    inject_existing.sort(key=lambda x: x[0], reverse=True)
-    for after_idx, new_lines in inject_existing:
-        for i, nl in enumerate(new_lines):
-            lines.insert(after_idx + 1 + i, nl)
-
-    # Append new sections at the end
-    if append_new_sections:
-        lines.extend(append_new_sections)
-
-    new_text = "\n".join(lines)
-    if not new_text.endswith("\n"):
-        new_text += "\n"
-    path.write_text(new_text, encoding="utf-8")
-
+    inject_existing, append_new = _build_injection_plan(missing, ranges)
+    _apply_injections(lines, inject_existing)
+    _write_updated(path, lines, append_new)
     return missing

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from vibeforcer.context import build_context
 from vibeforcer.util.subprocesses import run_shell
 
 
-def run_async_jobs(payload_dict: dict) -> tuple[str, list[str]]:
+def run_async_jobs(payload_dict: Mapping[str, object]) -> tuple[str, list[str]]:
     ctx = build_context(payload_dict)
-    if ctx.event_name != "PostToolUse" or not ctx.config.async_jobs_enabled or not ctx.languages:
+    if (
+        ctx.event_name != "PostToolUse"
+        or not ctx.config.async_jobs_enabled
+        or not ctx.languages
+    ):
         return ("", [])
     commands: list[str] = []
     for language in sorted(ctx.languages):

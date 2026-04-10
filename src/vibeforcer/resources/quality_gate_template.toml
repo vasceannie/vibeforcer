@@ -14,26 +14,54 @@ exclude_patterns = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi"]
 max_complexity = 12
 max_params = 4
 max_method_lines = 50
+max_test_lines = 35
+max_module_lines_soft = 350
+max_module_lines_hard = 600
 max_line_length = 120
 max_nesting_depth = 4
 max_god_class_methods = 15
 max_god_class_lines = 400
-max_module_lines_soft = 350
-max_module_lines_hard = 600
-max_test_lines = 35
 max_eager_test_calls = 7
+max_repeated_magic_numbers = 5
+max_repeated_string_literals = 10
+max_scattered_helpers = 5
+max_duplicate_helper_signatures = 10
+max_repeated_code_patterns = 50
+min_function_body_lines = 5
+min_call_sequence_length = 3
 feature_envy_threshold = 0.60
 feature_envy_min_accesses = 6
-import_fanout_limit = 5
 
 [magic_values]
-allowed_numbers = [0, 1, 2, 3, -1, 10, 100, 1000]
-allowed_strings = ["", " ", "\n", "\t", "utf-8"]
+allowed_numbers = [0, 1, 2, 3, 4, 5, -1, 10, 100, 200, 255, 1000, 1024, 0.5]
+allowed_strings = [
+    "",
+    " ",
+    "\n",
+    "\t",
+    "utf-8",
+    "r",
+    "w",
+    "rb",
+    "wb",
+    "GET",
+    "POST",
+    "PUT",
+    "DELETE",
+    "PATCH",
+    "id",
+    "name",
+    "type",
+    "value",
+    "text",
+    "status",
+]
 
 [wrappers]
 allowed = []
 
 [logging]
+logger_function = ""
 logger_variable = "logger"
 infrastructure_path = ""
 disallowed_names = ["_log", "_logger", "log", "LOG"]
@@ -48,6 +76,19 @@ ban_silent_except = true
 ban_silent_fallback = true
 
 [test_smells]
-max_consecutive_bare_asserts = 3
 ban_conditional_assertions = true
 ban_fixtures_outside_conftest = true
+max_consecutive_bare_asserts = 3
+
+[deprecated_patterns]
+patterns = [
+    ["from typing import Optional", "Optional[X] → X | None"],
+    ["from typing import Union", "Union[X, Y] → X | Y"],
+    ["from typing import List\\b", "List[X] → list[X]"],
+    ["from typing import Dict\\b", "Dict[K, V] → dict[K, V]"],
+    ["from typing import Tuple\\b", "Tuple[X] → tuple[X]"],
+    ["from typing import Set\\b", "Set[X] → set[X]"],
+]
+
+[scope]
+default = "all"

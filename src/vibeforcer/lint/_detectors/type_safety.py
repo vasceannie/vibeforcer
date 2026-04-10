@@ -3,20 +3,27 @@
 - ``detect_any_usage``:  flag uses of ``typing.Any`` in annotations.
 - ``detect_type_suppressions``:  flag ``# type: ignore`` and similar pragmas.
 """
+
 from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from vibeforcer.lint._baseline import Violation
 from vibeforcer.lint._config import get_config
-from vibeforcer.lint._helpers import ParsedFile, ensure_parsed, find_source_files, relative_path
+from vibeforcer.lint._helpers import (
+    ParsedFile,
+    ensure_parsed,
+    find_source_files,
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _inside_type_checking(node: ast.AST, parent_map: dict[int, ast.AST]) -> bool:
     """Return True if *node* is nested inside an ``if TYPE_CHECKING:`` block."""
@@ -156,7 +163,7 @@ def detect_any_usage(
 _compiled_cache: dict[tuple[str, ...], list[re.Pattern[str]]] = {}
 
 
-def _get_compiled_patterns(raw: list[str]) -> list[re.Pattern[str]]:
+def _get_compiled_patterns(raw: Sequence[str]) -> list[re.Pattern[str]]:
     """Return compiled regexes, cached by input."""
     key = tuple(raw)
     if key not in _compiled_cache:
@@ -227,6 +234,3 @@ def _find_comment_start(line: str) -> int:
                 return i
         i += 1
     return -1
-
-
-

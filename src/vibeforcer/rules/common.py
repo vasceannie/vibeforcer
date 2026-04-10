@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+from typing_extensions import override
 
 from vibeforcer.constants import SAFE_READ_SHELL_VERBS
 from vibeforcer.models import RuleFinding, Severity
-from vibeforcer.rules.base import Rule
+from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import lower_path, path_matches_glob
 from vibeforcer.util.subprocesses import run_shell
 
-
-def _is_rule_enabled(ctx: "HookContext", rule_id: str, default: bool = True) -> bool:
-    value = ctx.config.enabled_rules.get(rule_id)
-    return default if value is None else bool(value)
-
+if TYPE_CHECKING:
+    from vibeforcer.context import HookContext
 
 
 def _command_has_word(command: str, word: str) -> bool:
@@ -38,26 +36,32 @@ def _path_matches_any(path_value: str, patterns: list[str]) -> str | None:
     return None
 
 
-class PromptContextRule(Rule):
-    rule_id = "BUILTIN-INJECT-PROMPT"
-    title = "Inject prompt context"
-    events = ("UserPromptSubmit",)
+def _read_context_fragment(root: Path, relative: str) -> str | None:
+    """Read a prompt context file and return its fragment, or None to skip."""
+    path = root / relative
+    if not path.exists():
+        return None
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return f"## {relative}\n{content}" if content else None
 
+
+class PromptContextRule(Rule):
+    rule_id: str = "BUILTIN-INJECT-PROMPT"
+    title: str = "Inject prompt context"
+    events: tuple[str, ...] = ("UserPromptSubmit",)
+
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
-        fragments: list[str] = []
-        for relative in ctx.config.prompt_context_files:
-            path = ctx.config.root / relative
-            if not path.exists():
-                continue
-            try:
-                content = path.read_text(encoding="utf-8").strip()
-            except OSError:
-                continue
-            if not content:
-                continue
-            fragments.append(f"## {relative}\n{content}")
+        fragments = [
+            frag
+            for relative in ctx.config.prompt_context_files
+            if (frag := _read_context_fragment(ctx.config.root, relative)) is not None
+        ]
         if not fragments:
             return []
         return [
@@ -92,15 +96,16 @@ def _is_large_file(path_str: str, threshold: int) -> bool:
 
 
 class FullFileReadRule(Rule):
-    rule_id = "BUILTIN-ENFORCE-FULL-READ"
-    title = "Enforce full file read"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "BUILTIN-ENFORCE-FULL-READ"
+    title: str = "Enforce full file read"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
-    EXEMPT_SUFFIXES = (".md", ".json", ".yaml", ".yml", ".txt", ".log", ".csv")
-    LARGE_FILE_BYTES = 40_000
+    EXEMPT_SUFFIXES: tuple[str, ...] = (".md", ".json", ".yaml", ".yml", ".txt", ".log", ".csv")
+    LARGE_FILE_BYTES: int = 40_000
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if ctx.tool_name != "Read":
             return []
@@ -129,49 +134,64 @@ class FullFileReadRule(Rule):
         ]
 
 
-class ProtectedPathsRule(Rule):
-    rule_id = "BUILTIN-PROTECTED-PATHS"
-    title = "Protected paths"
-    events = ("PreToolUse", "PermissionRequest")
+def _is_readonly_tool(tool_name: str | None) -> bool:
+    from vibeforcer.constants import READ_TOOL_NAMES
 
+    return bool(tool_name and tool_name.lower() in READ_TOOL_NAMES)
+
+
+def _is_safe_bash_read(tool_name: str | None, bash_command: str | None) -> bool:
+    return (
+        tool_name is not None
+        and tool_name.lower() == "bash"
+        and bash_command is not None
+        and _is_safe_read_shell(bash_command)
+    )
+
+
+def _find_matched_protected_path(
+    candidate_paths: list[str],
+    patterns: list[str],
+) -> str | None:
+    for path_value in candidate_paths:
+        if _path_matches_any(path_value, patterns):
+            return path_value
+    return None
+
+
+class ProtectedPathsRule(Rule):
+    rule_id: str = "BUILTIN-PROTECTED-PATHS"
+    title: str = "Protected paths"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
+
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         patterns = ctx.config.protected_paths
         if not patterns:
             return []
-        # Read-only tools should never be blocked by protected paths
-        from vibeforcer.constants import READ_TOOL_NAMES
-        if ctx.tool_name and ctx.tool_name.lower() in READ_TOOL_NAMES:
+        if _is_readonly_tool(ctx.tool_name):
             return []
-
-        matched_path = None
-        for path_value in ctx.candidate_paths:
-            pattern = _path_matches_any(path_value, patterns)
-            if pattern:
-                matched_path = path_value
-                break
-
-        if matched_path:
-            if ctx.tool_name and ctx.tool_name.lower() == "bash":
-                command = ctx.bash_command
-                if command and _is_safe_read_shell(command):
-                    return []
-            return [
-                RuleFinding(
-                    rule_id=self.rule_id,
-                    title=self.title,
-                    severity=Severity.HIGH,
-                    decision="deny",
-                    message=(
-                        f"Protected path matched: {matched_path}. "
-                        f"Modify configuration only with explicit "
-                        f"approval or move the check into config.json."
-                    ),
-                    metadata={"path": matched_path},
-                )
-            ]
-        return []
+        matched_path = _find_matched_protected_path(ctx.candidate_paths, patterns)
+        if matched_path is None:
+            return []
+        if _is_safe_bash_read(ctx.tool_name, ctx.bash_command):
+            return []
+        return [
+            RuleFinding(
+                rule_id=self.rule_id,
+                title=self.title,
+                severity=Severity.HIGH,
+                decision="deny",
+                message=(
+                    f"Protected path matched: {matched_path}. "
+                    f"Modify configuration only with explicit "
+                    f"approval or move the check into config.json."
+                ),
+                metadata={"path": matched_path},
+            )
+        ]
 
 
 _META_CHARS = frozenset("[](){}*+?|^$\\")
@@ -202,13 +222,18 @@ def _compile_sensitive_patterns(raw: list[str]) -> list[re.Pattern[str]]:
 
 
 class SensitiveDataRule(Rule):
-    rule_id = "GLOBAL-BUILTIN-SENSITIVE-DATA"
-    title = "Sensitive data protection"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "GLOBAL-BUILTIN-SENSITIVE-DATA"
+    title: str = "Sensitive data protection"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
-    SAFE_SUFFIXES = (
-        ".example", ".sample", ".template",
-        ".defaults", ".dist", ".test", ".bak",
+    SAFE_SUFFIXES: tuple[str, ...] = (
+        ".example",
+        ".sample",
+        ".template",
+        ".defaults",
+        ".dist",
+        ".test",
+        ".bak",
     )
 
     def _is_safe_path(self, path_value: str) -> bool:
@@ -240,7 +265,7 @@ class SensitiveDataRule(Rule):
         _WORD_BREAKS = frozenset(" \t\n;|&><")
         for pattern in compiled:
             for m in pattern.finditer(lowered):
-                rest = lowered[m.end():]
+                rest = lowered[m.end() :]
                 end = next(
                     (i for i, ch in enumerate(rest) if ch in _WORD_BREAKS),
                     len(rest),
@@ -254,8 +279,9 @@ class SensitiveDataRule(Rule):
                     return "[command]"
         return None
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         compiled = _compile_sensitive_patterns(
             ctx.config.sensitive_path_patterns,
@@ -303,12 +329,13 @@ def _match_system_command(command: str, prefixes: list[str]) -> str | None:
 
 
 class SystemProtectionRule(Rule):
-    rule_id = "GLOBAL-BUILTIN-SYSTEM-PROTECTION"
-    title = "System path protection"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "GLOBAL-BUILTIN-SYSTEM-PROTECTION"
+    title: str = "System path protection"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         prefixes = [i.lower() for i in ctx.config.system_path_prefixes]
         if not prefixes:
@@ -324,9 +351,7 @@ class SystemProtectionRule(Rule):
                 title=self.title,
                 severity=Severity.CRITICAL,
                 decision="deny",
-                message=(
-                    f"Critical system path access is blocked: {matched}"
-                ),
+                message=(f"Critical system path access is blocked: {matched}"),
                 metadata={"target": matched},
             )
         ]
@@ -347,12 +372,13 @@ def _detect_git_bypass(command: str) -> str | None:
 
 
 class GitNoVerifyRule(Rule):
-    rule_id = "GIT-001"
-    title = "Block git --no-verify"
-    events = ("PreToolUse", "PermissionRequest")
+    rule_id: str = "GIT-001"
+    title: str = "Block git --no-verify"
+    events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if not ctx.bash_command:
             return []
@@ -382,10 +408,11 @@ class GitNoVerifyRule(Rule):
 
 
 class SearchReminderRule(Rule):
-    rule_id = "REMIND-SEARCH-001"
-    title = "Search reminder"
-    events = ("PreToolUse",)
+    rule_id: str = "REMIND-SEARCH-001"
+    title: str = "Search reminder"
+    events: tuple[str, ...] = ("PreToolUse",)
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         if not ctx.config.search_reminder_message:
             return []
@@ -455,12 +482,13 @@ def _run_quality_commands(
 
 
 class PostEditQualityRule(Rule):
-    rule_id = "QUALITY-POST-001"
-    title = "Post-edit quality gate"
-    events = ("PostToolUse",)
+    rule_id: str = "QUALITY-POST-001"
+    title: str = "Post-edit quality gate"
+    events: tuple[str, ...] = ("PostToolUse",)
 
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
-        if not _is_rule_enabled(ctx, self.rule_id):
+        if not is_rule_enabled(ctx, self.rule_id):
             return []
         if not ctx.config.post_edit_quality_enabled or not ctx.languages:
             return []

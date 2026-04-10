@@ -12,19 +12,6 @@ from vibeforcer.rules.common import (
     SensitiveDataRule,
     SystemProtectionRule,
 )
-from vibeforcer.rules.python_ast import (
-    PythonCyclomaticComplexityRule,
-    PythonDeadCodeRule,
-    PythonDeepNestingRule,
-    PythonFeatureEnvyRule,
-    PythonGodClassRule,
-    PythonLongLineRule,
-    PythonLongMethodRule,
-    PythonLongParameterRule,
-    PythonThinWrapperRule,
-    PythonFlatFileSiblingsRule,
-    PythonImportFanoutRule,
-)
 from vibeforcer.rules.regex_rule import RegexRule
 from vibeforcer.rules.langgraph import (
     LangGraphDeprecatedAPIRule,
@@ -32,16 +19,86 @@ from vibeforcer.rules.langgraph import (
     LangGraphStateReducerRule,
 )
 from vibeforcer.rules.baseline_guard import BaselineGuardRule
-from vibeforcer.rules.error_rules import BashFailureReinforcementRule, BashOutputErrorRule
+from vibeforcer.rules.error_rules import (
+    BashFailureReinforcementRule,
+    BashOutputErrorRule,
+)
 from vibeforcer.rules.stop_rules import (
     ConfigChangeGuardRule,
     SessionStartContextRule,
     HookInfraExecProtectionRule,
     IgnorePreexistingRule,
-    RequireMakeQualityRule,
+    RequireQualityCheckRule,
     RulebookSecurityRule,
     WarnLargeFileRule,
 )
+
+
+_PYTHON_AST_IMPORT_ERROR: Exception | None = None
+_PYTHON_AST_IMPORT_REPORTED = False
+
+# Backward-compatible aliases for older internal references.
+_python_ast_import_error: Exception | None = None
+_python_ast_import_reported = False
+
+
+def _build_python_ast_rules(ctx: HookContext) -> list[Rule]:
+    global _python_ast_import_error, _python_ast_import_reported
+
+    current_error = _PYTHON_AST_IMPORT_ERROR or _python_ast_import_error
+    already_reported = _PYTHON_AST_IMPORT_REPORTED or _python_ast_import_reported
+
+    if current_error is not None:
+        if not already_reported:
+            _python_ast_import_reported = True
+            ctx.trace.rule(
+                {
+                    "platform": "any",
+                    "event_name": ctx.event_name,
+                    "session_id": ctx.session_id,
+                    "tool_name": ctx.tool_name,
+                    "rule_id": "PY-AST-IMPORT-001",
+                    "severity": "high",
+                    "decision": None,
+                    "message": "Python AST rules disabled due to import error",
+                    "additional_context": repr(current_error),
+                    "metadata": {"kind": "import_error"},
+                }
+            )
+        return []
+
+    try:
+        from vibeforcer.rules.python_ast import (
+            PythonCyclomaticComplexityRule,
+            PythonDeadCodeRule,
+            PythonDeepNestingRule,
+            PythonFeatureEnvyRule,
+            PythonFlatFileSiblingsRule,
+            PythonGodClassRule,
+            PythonImportFanoutRule,
+            PythonLongLineRule,
+            PythonLongMethodRule,
+            PythonLongParameterRule,
+            PythonThinWrapperRule,
+        )
+    except Exception as exc:  # pragma: no cover - exercised in import-failure test
+        _python_ast_import_error = exc
+        return _build_python_ast_rules(ctx)
+
+    python_ast_rules: list[Rule] = [
+        PythonLongMethodRule(),
+        PythonLongParameterRule(),
+        PythonLongLineRule(),
+        PythonDeepNestingRule(),
+        PythonFeatureEnvyRule(),
+        PythonThinWrapperRule(),
+        PythonGodClassRule(),
+        PythonCyclomaticComplexityRule(),
+        PythonDeadCodeRule(),
+        PythonFlatFileSiblingsRule(),
+        PythonImportFanoutRule(),
+    ]
+    return python_ast_rules
 
 
 def build_rules(ctx: HookContext) -> list[Rule]:
@@ -54,20 +111,9 @@ def build_rules(ctx: HookContext) -> list[Rule]:
         GitNoVerifyRule(),
         SearchReminderRule(),
         PostEditQualityRule(),
-        PythonLongMethodRule(),
-        PythonLongParameterRule(),
-        PythonLongLineRule(),
-        PythonDeepNestingRule(),
-        PythonFeatureEnvyRule(),
-        PythonThinWrapperRule(),
-        PythonGodClassRule(),
-        PythonCyclomaticComplexityRule(),
-        PythonDeadCodeRule(),
-        PythonFlatFileSiblingsRule(),
-        PythonImportFanoutRule(),
         BaselineGuardRule(),
         IgnorePreexistingRule(),
-        RequireMakeQualityRule(),
+        RequireQualityCheckRule(),
         WarnLargeFileRule(),
         HookInfraExecProtectionRule(),
         RulebookSecurityRule(),
@@ -79,8 +125,12 @@ def build_rules(ctx: HookContext) -> list[Rule]:
         LangGraphStateMutationRule(),
         LangGraphDeprecatedAPIRule(),
     ]
+    rules.extend(_build_python_ast_rules(ctx))
     rules.extend(
-        RegexRule(config=regex_rule, enabled=ctx.config.enabled_rules.get(regex_rule.rule_id, True))
+        RegexRule(
+            config=regex_rule,
+            enabled=ctx.config.enabled_rules.get(regex_rule.rule_id, True),
+        )
         for regex_rule in ctx.config.regex_rules
     )
     return rules

@@ -5,11 +5,15 @@ ERRORS-FAIL-001: PostToolUseFailure Bash — catches non-zero exit commands
 
 Both inject context telling Claude to fix errors instead of dismissing them.
 """
+
 from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
+from vibeforcer._types import object_dict, string_value
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule
 
@@ -22,15 +26,50 @@ if TYPE_CHECKING:
 # Commands whose output should NEVER trigger error detection
 # (read-only / informational — output naturally contains "error" as data)
 _READ_ONLY_PREFIXES = (
-    "grep ", "grep\t", "egrep ", "fgrep ", "rg ", "ag ", "ack ",
-    "cat ", "head ", "tail ", "less ", "more ", "bat ",
-    "ls ", "ls\t", "ll ", "dir ", "tree ", "du ", "df ", "wc ",
-    "find ", "locate ", "fd ",
-    "git log", "git show", "git diff", "git status", "git blame",
-    "git branch", "git tag", "git remote", "git stash list",
-    "which ", "whereis ", "type ", "file ", "stat ",
-    "echo ", "printf ", "env", "printenv",
-    "man ", "help ",
+    "grep ",
+    "grep\t",
+    "egrep ",
+    "fgrep ",
+    "rg ",
+    "ag ",
+    "ack ",
+    "cat ",
+    "head ",
+    "tail ",
+    "less ",
+    "more ",
+    "bat ",
+    "ls ",
+    "ls\t",
+    "ll ",
+    "dir ",
+    "tree ",
+    "du ",
+    "df ",
+    "wc ",
+    "find ",
+    "locate ",
+    "fd ",
+    "git log",
+    "git show",
+    "git diff",
+    "git status",
+    "git blame",
+    "git branch",
+    "git tag",
+    "git remote",
+    "git stash list",
+    "which ",
+    "whereis ",
+    "type ",
+    "file ",
+    "stat ",
+    "echo ",
+    "printf ",
+    "env",
+    "printenv",
+    "man ",
+    "help ",
     "pwd",
 )
 
@@ -109,7 +148,12 @@ _ERROR_PATTERNS = [
     re.compile(r"compilation\s+error", re.IGNORECASE),
     # Python tracebacks
     re.compile(r"Traceback \(most recent call last\)"),
-    re.compile(r"(?:SyntaxError|TypeError|NameError|ValueError|AttributeError|ImportError|KeyError|IndexError|RuntimeError|AssertionError|FileNotFoundError|ModuleNotFoundError|OSError|PermissionError):", re.MULTILINE),
+    re.compile(
+        r"(?:SyntaxError|TypeError|NameError|ValueError|AttributeError"
+        + r"|ImportError|KeyError|IndexError|RuntimeError|AssertionError"
+        + r"|FileNotFoundError|ModuleNotFoundError|OSError|PermissionError):",
+        re.MULTILINE,
+    ),
     # Lint / type-check
     re.compile(r"Found\s+\d+\s+error", re.IGNORECASE),
     re.compile(r"error\[E\d+\]", re.IGNORECASE),  # Rust compiler
@@ -121,7 +165,9 @@ _FALSE_POSITIVE_PATTERNS = [
     # "X passed" with no failures
     re.compile(r"^\s*\d+\s+passed(?:\s+in\s+[\d.]+s)?\s*$", re.MULTILINE),
     # Deprecation/pip warnings are not actionable errors
-    re.compile(r"DEPRECATION:|DeprecationWarning|PendingDeprecationWarning", re.IGNORECASE),
+    re.compile(
+        r"DEPRECATION:|DeprecationWarning|PendingDeprecationWarning", re.IGNORECASE
+    ),
     # Docker build warnings (non-fatal)
     re.compile(r"\d+\s+warnings?\s+found\s+\(use\s+docker", re.IGNORECASE),
     # "Successfully" anything
@@ -180,57 +226,50 @@ _FAILURE_CONTEXT = (
 
 # ── Rules ───────────────────────────────────────────────────────────────
 
+
+def _extract_bash_output(ctx: HookContext) -> str:
+    """Return combined stdout+stderr from a PostToolUse payload, or empty string."""
+    tool_response = object_dict(ctx.payload.payload.get("tool_response"))
+    if not tool_response:
+        return ""
+    stdout = string_value(tool_response.get("stdout")) or ""
+    stderr = string_value(tool_response.get("stderr")) or ""
+    return f"{stdout}\n{stderr}".strip()
+
+
 class BashOutputErrorRule(Rule):
     """Detect errors in Bash output even when exit code is 0.
 
     PostToolUse fires for exit-0 commands. Some tools (ruff --exit-zero,
     eslint --max-warnings, etc.) exit 0 despite reporting errors.
     """
-    rule_id = "ERRORS-BASH-001"
-    title = "Bash output error interceptor"
-    events = ("PostToolUse",)
 
-    def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
+    rule_id: str = "ERRORS-BASH-001"
+    title: str = "Bash output error interceptor"
+    events: tuple[str, ...] = ("PostToolUse",)
+
+    @override
+    def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
         enabled = ctx.config.enabled_rules.get(self.rule_id)
         if enabled is not None and not enabled:
             return []
-
-        # Only Bash tool
         if not ctx.tool_name or ctx.tool_name != "Bash":
             return []
-
         command = ctx.bash_command
-        if not command:
+        if not command or _is_read_only_command(command):
             return []
-
-        # Skip read-only commands
-        if _is_read_only_command(command):
+        output = _extract_bash_output(ctx)
+        if not output or not _has_error_signals(output):
             return []
-
-        # Get stdout from tool_response
-        tool_response = ctx.payload.payload.get("tool_response")
-        if not isinstance(tool_response, dict):
-            return []
-
-        stdout = tool_response.get("stdout", "")
-        stderr = tool_response.get("stderr", "")
-        output = f"{stdout}\n{stderr}".strip()
-
-        if not output:
-            return []
-
-        if _has_error_signals(output):
-            return [
-                RuleFinding(
-                    rule_id=self.rule_id,
-                    title=self.title,
-                    severity=Severity.HIGH,
-                    additional_context=_ERROR_CONTEXT,
-                    metadata={"command": command[:200]},
-                )
-            ]
-
-        return []
+        return [
+            RuleFinding(
+                rule_id=self.rule_id,
+                title=self.title,
+                severity=Severity.HIGH,
+                additional_context=_ERROR_CONTEXT,
+                metadata={"command": command[:200]},
+            )
+        ]
 
 
 class BashFailureReinforcementRule(Rule):
@@ -239,10 +278,12 @@ class BashFailureReinforcementRule(Rule):
     PostToolUseFailure fires for ANY non-zero exit. We filter out
     commands where non-zero exit is normal (grep, diff, test, etc.).
     """
-    rule_id = "ERRORS-FAIL-001"
-    title = "Bash failure reinforcement"
-    events = ("PostToolUseFailure",)
 
+    rule_id: str = "ERRORS-FAIL-001"
+    title: str = "Bash failure reinforcement"
+    events: tuple[str, ...] = ("PostToolUseFailure",)
+
+    @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
         enabled = ctx.config.enabled_rules.get(self.rule_id)
         if enabled is not None and not enabled:

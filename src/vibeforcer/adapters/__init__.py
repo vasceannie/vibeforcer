@@ -8,6 +8,7 @@ Supported platforms:
   - codex    : OpenAI Codex CLI
   - opencode : OpenCode (Anomaly)
 """
+
 from __future__ import annotations
 
 from vibeforcer.adapters.base import PlatformAdapter
@@ -31,9 +32,9 @@ def get_adapter(platform: str) -> PlatformAdapter:
         return cached
     cls = ADAPTERS.get(platform)
     if cls is None:
+        valid_options = ", ".join(sorted(ADAPTERS))
         raise ValueError(
-            f"Unknown platform {platform!r}. "
-            f"Valid options: {', '.join(sorted(ADAPTERS))}"
+            f"Unknown platform {platform!r}. Valid options: {valid_options}"
         )
     instance = cls()
     _ADAPTER_CACHE[platform] = instance

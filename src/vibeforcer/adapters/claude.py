@@ -1,37 +1,47 @@
 """Claude Code adapter — the original/default platform."""
+
 from __future__ import annotations
 
-from typing import Any
+from typing_extensions import override
 
+from vibeforcer._types import (
+    ObjectDict,
+    ObjectMapping,
+    is_object_dict,
+    object_dict,
+    string_value,
+)
 from vibeforcer.adapters.base import PlatformAdapter
 from vibeforcer.models import RuleFinding
 
 
 class ClaudeAdapter(PlatformAdapter):
-    name = "claude"
+    name: str = "claude"
 
-    def normalize_payload(self, raw: dict[str, Any]) -> dict[str, Any]:
-        return raw
+    @override
+    def normalize_payload(self, raw: ObjectMapping) -> ObjectDict:
+        if is_object_dict(raw):
+            return raw
+        return object_dict(raw)
 
+    @override
     def render_output(
         self,
         event_name: str,
         findings: list[RuleFinding],
         *,
         context: str | None = None,
-        updated_input: dict[str, Any] | None = None,
+        updated_input: ObjectDict | None = None,
         decision: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> ObjectDict | None:
         if not findings:
             return None
 
         updated_input = updated_input or {}
 
         if event_name == "PreToolUse":
-            payload: dict[str, Any] = {
-                "hookSpecificOutput": {"hookEventName": "PreToolUse"}
-            }
-            specific = payload["hookSpecificOutput"]
+            specific: ObjectDict = {"hookEventName": "PreToolUse"}
+            response: ObjectDict = {"hookSpecificOutput": specific}
             if decision in {"deny", "ask", "allow"}:
                 specific["permissionDecision"] = decision
                 specific["permissionDecisionReason"] = self.join_messages(
@@ -46,14 +56,12 @@ class ClaudeAdapter(PlatformAdapter):
                 specific["updatedInput"] = updated_input
             if context:
                 specific["additionalContext"] = context
-            return payload if len(specific) > 1 else None
+            return response if len(specific) > 1 else None
 
         if event_name == "PermissionRequest":
             if decision not in {"deny", "allow"}:
                 return None
-            inner: dict[str, Any] = {
-                "behavior": "allow" if decision == "allow" else "deny"
-            }
+            inner: ObjectDict = {"behavior": "allow" if decision == "allow" else "deny"}
             if updated_input and decision == "allow":
                 inner["updatedInput"] = updated_input
             if decision == "deny":
@@ -78,7 +86,7 @@ class ClaudeAdapter(PlatformAdapter):
             return None
 
         if event_name in {"UserPromptSubmit", "PostToolUse"}:
-            payload = {}
+            payload: ObjectDict = {}
             if decision in {"block", "deny", "ask"}:
                 payload["decision"] = "block"
                 payload["reason"] = self.join_messages(
@@ -101,7 +109,7 @@ class ClaudeAdapter(PlatformAdapter):
             if context and not payload.get("decision"):
                 payload["systemMessage"] = context
             elif context:
-                existing = payload.get("reason", "")
+                existing = string_value(payload.get("reason"))
                 payload["reason"] = (
                     (existing + "\n\n" + context).strip() if existing else context
                 )

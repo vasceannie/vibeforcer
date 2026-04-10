@@ -4,6 +4,7 @@ All rules are advisory (additionalContext only, never decision:block)
 because PostToolUse cannot prevent the edit — it already happened.
 These nudge Claude toward LangGraph best practices without halting.
 """
+
 from __future__ import annotations
 
 import ast
@@ -12,17 +13,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
 from vibeforcer.models import RuleFinding, Severity
-from vibeforcer.rules.base import Rule
+from vibeforcer.rules.base import Rule, is_rule_enabled
 from vibeforcer.util.payloads import is_edit_like_tool, is_bash_tool
 
 if TYPE_CHECKING:
     from vibeforcer.context import HookContext
-
-
-def _is_enabled(ctx: HookContext, rule_id: str, default: bool = True) -> bool:
-    value = ctx.config.enabled_rules.get(rule_id)
-    return default if value is None else bool(value)
 
 
 _DEPENDENCY_FILES = (
@@ -113,22 +111,26 @@ def _iter_langgraph_sources(
 
 def _is_typed_dict_base(base: ast.expr) -> bool:
     """Check if an AST base class node refers to TypedDict."""
-    if isinstance(base, ast.Name) and base.id == "TypedDict":
-        return True
-    if isinstance(base, ast.Attribute) and base.attr == "TypedDict":
-        return True
-    if isinstance(base, ast.Call) and isinstance(base.func, ast.Name):
-        return base.func.id == "TypedDict"
-    return False
+    match base:
+        case ast.Name(id="TypedDict"):
+            return True
+        case ast.Attribute(attr="TypedDict"):
+            return True
+        case ast.Call(func=ast.Name(id="TypedDict")):
+            return True
+        case _:
+            return False
 
 
 def _is_bare_list_annotation(ann: ast.expr) -> bool:
     """Return True if annotation is a bare ``list`` or ``list[X]``."""
-    if isinstance(ann, ast.Name) and ann.id == "list":
-        return True
-    if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
-        return ann.value.id == "list"
-    return False
+    match ann:
+        case ast.Name(id="list"):
+            return True
+        case ast.Subscript(value=ast.Name(id="list")):
+            return True
+        case _:
+            return False
 
 
 def _is_annotated_wrapper(ann: ast.expr) -> bool:
@@ -197,12 +199,13 @@ def _find_reducer_findings(
 class LangGraphStateReducerRule(Rule):
     """Detect TypedDict state schemas with list fields missing reducers."""
 
-    rule_id = "LG-STATE-001"
-    title = "LangGraph state list field without reducer"
-    events = ("PostToolUse",)
+    rule_id: str = "LG-STATE-001"
+    title: str = "LangGraph state list field without reducer"
+    events: tuple[str, ...] = ("PostToolUse",)
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
+        if not is_rule_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
             return []
         findings: list[RuleFinding] = []
         for path_value, source in _iter_langgraph_sources(ctx):
@@ -217,14 +220,14 @@ class LangGraphStateReducerRule(Rule):
 # Compiled once at import time — patterns that indicate direct state mutation.
 # These are regex *definitions*, not actual state mutation code.
 _STATE_MUTATION_PATTERNS = [
-    re.compile(r'\bstate\s*\[.+\]\s*='),
-    re.compile(r'\bstate\s*\[.+\]\.append\b'),
-    re.compile(r'\bstate\s*\[.+\]\.extend\b'),
-    re.compile(r'\bstate\s*\[.+\]\.update\b'),
-    re.compile(r'\bstate\.update\s*\('),
-    re.compile(r'\bstate\s*\[.+\]\.pop\b'),
-    re.compile(r'\bstate\s*\[.+\]\.clear\b'),
-    re.compile(r'\bstate\s*\[.+\]\s*\+='),
+    re.compile(r"\bstate\s*\[.+\]\s*="),
+    re.compile(r"\bstate\s*\[.+\]\.append\b"),
+    re.compile(r"\bstate\s*\[.+\]\.extend\b"),
+    re.compile(r"\bstate\s*\[.+\]\.update\b"),
+    re.compile(r"\bstate\.update\s*\("),
+    re.compile(r"\bstate\s*\[.+\]\.pop\b"),
+    re.compile(r"\bstate\s*\[.+\]\.clear\b"),
+    re.compile(r"\bstate\s*\[.+\]\s*\+="),
 ]
 
 
@@ -257,7 +260,7 @@ def _mutation_finding(
         additional_context=(
             f"Possible direct state mutation in `{path_value}`: "
             f"{example_str}. LangGraph nodes should return partial "
-            f"state updates (e.g., return {{\"field\": new_value}}) "
+            f'state updates (e.g., return {{"field": new_value}}) '
             f"instead of mutating state directly. Direct mutation can "
             f"cause checkpoint corruption and non-deterministic behavior."
         ),
@@ -272,12 +275,13 @@ def _mutation_finding(
 class LangGraphStateMutationRule(Rule):
     """Detect direct state mutation in LangGraph node functions."""
 
-    rule_id = "LG-NODE-001"
-    title = "Direct state mutation in LangGraph node"
-    events = ("PostToolUse",)
+    rule_id: str = "LG-NODE-001"
+    title: str = "Direct state mutation in LangGraph node"
+    events: tuple[str, ...] = ("PostToolUse",)
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
+        if not is_rule_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
             return []
         findings: list[RuleFinding] = []
         for path_value, source in _iter_langgraph_sources(ctx):
@@ -293,12 +297,12 @@ class LangGraphStateMutationRule(Rule):
 
 _DEPRECATED_APIS = [
     (
-        re.compile(r'\.set_entry_point\s*\('),
+        re.compile(r"\.set_entry_point\s*\("),
         "set_entry_point()",
         'add_edge(START, "node")',
     ),
     (
-        re.compile(r'\.set_finish_point\s*\('),
+        re.compile(r"\.set_finish_point\s*\("),
         "set_finish_point()",
         'add_edge("node", END)',
     ),
@@ -308,12 +312,13 @@ _DEPRECATED_APIS = [
 class LangGraphDeprecatedAPIRule(Rule):
     """Flag deprecated LangGraph API usage."""
 
-    rule_id = "LG-API-001"
-    title = "Deprecated LangGraph API usage"
-    events = ("PostToolUse",)
+    rule_id: str = "LG-API-001"
+    title: str = "Deprecated LangGraph API usage"
+    events: tuple[str, ...] = ("PostToolUse",)
 
+    @override
     def evaluate(self, ctx: HookContext) -> list[RuleFinding]:
-        if not _is_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
+        if not is_rule_enabled(ctx, self.rule_id) or not _is_applicable_tool(ctx):
             return []
         findings: list[RuleFinding] = []
         for path_value, source in _iter_langgraph_sources(ctx):
