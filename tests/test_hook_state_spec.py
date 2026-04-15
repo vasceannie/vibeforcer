@@ -5,12 +5,14 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from time import time
 
 import pytest
 
 from vibeforcer.adapters import get_adapter
 from vibeforcer.engine import evaluate_payload
 from vibeforcer.models import RuleFinding, Severity
+from vibeforcer.state import HookStateStore
 from tests.support import BUNDLE_ROOT, assert_denied_by, assert_not_denied, finding_ids
 
 _RESOURCES = BUNDLE_ROOT / "src" / "vibeforcer" / "resources"
@@ -327,6 +329,62 @@ class TestFullReadStatefulSpec:
 
         assert "BUILTIN-ENFORCE-FULL-READ" not in first["finding_ids"]
         assert "BUILTIN-ENFORCE-FULL-READ" not in second["finding_ids"]
+
+    def test_symlinked_paths_share_unlock_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _config_with_enabled_rules(tmp_path, monkeypatch, "BUILTIN-ENFORCE-FULL-READ")
+        target = tmp_path / "module.py"
+        link_path = tmp_path / "alias.py"
+        target.write_text("a = 1\nb = 2\n", encoding="utf-8")
+        link_path.symlink_to(target)
+        session_id = "same-session"
+
+        _ = evaluate_payload(
+            _read_payload(str(target), cwd=str(tmp_path), session_id=session_id)
+        )
+        result = evaluate_payload(
+            _read_payload(
+                str(link_path),
+                cwd=str(tmp_path),
+                session_id=session_id,
+                offset=1,
+                limit=1,
+            )
+        )
+
+        assert_not_denied(result)
+
+    def test_missing_files_do_not_create_unlock_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _config_with_enabled_rules(tmp_path, monkeypatch, "BUILTIN-ENFORCE-FULL-READ")
+        missing = tmp_path / "missing.py"
+        session_id = "same-session"
+
+        _ = evaluate_payload(
+            _read_payload(str(missing), cwd=str(tmp_path), session_id=session_id)
+        )
+        result = evaluate_payload(
+            _read_payload(
+                str(missing),
+                cwd=str(tmp_path),
+                session_id=session_id,
+                offset=1,
+                limit=1,
+            )
+        )
+
+        assert_denied_by(result, "BUILTIN-ENFORCE-FULL-READ")
+
+
+class TestHookStateStore:
+    def test_ttl_expiry_filters_stale_full_reads(self, tmp_path: Path) -> None:
+        store = HookStateStore(tmp_path)
+        key = store._full_read_key("session-a", str(tmp_path / "module.py"))
+        store._save_state({"full_reads": {key: int(time()) - store._TTL_SECONDS - 5}})
+
+        assert not store.has_full_read("session-a", str(tmp_path / "module.py"))
 
 
 class TestSearchReminderCurrentGuards:

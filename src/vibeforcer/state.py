@@ -3,16 +3,22 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from time import time
 
+from vibeforcer.util.logger import warning
 
-@dataclass(frozen=True, slots=True)
-class FullReadKey:
-    session_id: str
-    path: str
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows only
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - POSIX only
+    msvcrt = None
 
 
 class HookStateStore:
@@ -26,6 +32,7 @@ class HookStateStore:
 
     def __init__(self, trace_dir: Path) -> None:
         self._path = trace_dir / "hook-state.json"
+        self._lock_path = trace_dir / "hook-state.lock"
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
     def has_full_read(self, session_id: str, path: str) -> bool:
@@ -34,14 +41,48 @@ class HookStateStore:
         return key in state.get("full_reads", {})
 
     def record_full_read(self, session_id: str, path: str) -> None:
-        key = self._full_read_key(session_id, path)
-        state = self._load_state()
-        state.setdefault("full_reads", {})[key] = int(time())
-        self._save_state(state)
+        normalized_path = self._normalize_path(path)
+        if not Path(normalized_path).exists():
+            return
+        key = self._full_read_key(session_id, normalized_path)
+        with self._locked_state():
+            state = self._load_state()
+            state.setdefault("full_reads", {})[key] = int(time())
+            self._save_state(state)
+
+    @contextmanager
+    def _locked_state(self) -> Iterator[None]:
+        with self._lock_path.open("a+", encoding="utf-8") as handle:
+            self._acquire_lock(handle)
+            try:
+                yield
+            finally:
+                self._release_lock(handle)
+
+    def _acquire_lock(self, handle: object) -> None:
+        fileno = handle.fileno()  # type: ignore[attr-defined]
+        if fcntl is not None:
+            fcntl.flock(fileno, fcntl.LOCK_EX)
+            return
+        if msvcrt is not None:  # pragma: no cover - Windows only
+            handle.seek(0)  # type: ignore[attr-defined]
+            handle.write("\0")  # type: ignore[attr-defined]
+            handle.flush()  # type: ignore[attr-defined]
+            handle.seek(0)  # type: ignore[attr-defined]
+            msvcrt.locking(fileno, msvcrt.LK_LOCK, 1)
+
+    def _release_lock(self, handle: object) -> None:
+        fileno = handle.fileno()  # type: ignore[attr-defined]
+        if fcntl is not None:
+            fcntl.flock(fileno, fcntl.LOCK_UN)
+            return
+        if msvcrt is not None:  # pragma: no cover - Windows only
+            handle.seek(0)  # type: ignore[attr-defined]
+            msvcrt.locking(fileno, msvcrt.LK_UNLCK, 1)
 
     def _full_read_key(self, session_id: str, path: str) -> str:
         return json.dumps(
-            {"session_id": session_id.strip(), "path": self._normalize_path(path)},
+            {"session_id": session_id.strip(), "path": self._normalize_path(path.strip())},
             sort_keys=True,
         )
 
@@ -84,5 +125,5 @@ class HookStateStore:
             try:
                 if os.path.exists(tmp_name):
                     os.unlink(tmp_name)
-            except OSError:
-                pass
+            except OSError as exc:
+                warning("hook state temp cleanup failed", path=tmp_name, error=str(exc))

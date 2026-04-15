@@ -146,7 +146,7 @@ Goal: keep the spec behavioral, while forcing the implementation to fit the real
 
 - In-memory cache, file-backed store, or another lightweight IPC mechanism?
 
-  File-backed state under the existing trace directory. Hooks run in separate subprocesses, so in-memory state would not satisfy the subprocess-boundary spec.
+  File-backed state under the existing trace directory, with locking around updates. Hooks run in separate subprocesses, so in-memory state would not satisfy the subprocess-boundary spec.
 
 - What is the canonical path key for symlinks, worktrees, and relative paths?
 
