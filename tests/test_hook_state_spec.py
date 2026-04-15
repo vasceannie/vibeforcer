@@ -103,6 +103,16 @@ def _posttool_payload(
     }
 
 
+def _python_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    src_path = str(BUNDLE_ROOT / "src")
+    current_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        src_path if not current_pythonpath else src_path + os.pathsep + current_pythonpath
+    )
+    return env
+
+
 def _run_payload_in_subprocess(
     payload: dict[str, object],
     *,
@@ -137,20 +147,34 @@ print(json.dumps({
     "output": result.output,
 }, default=str))
 """.strip()
-    env = os.environ.copy()
-    src_path = str(BUNDLE_ROOT / "src")
-    current_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        src_path if not current_pythonpath else src_path + os.pathsep + current_pythonpath
-    )
     completed = subprocess.run(
         [sys.executable, "-c", script, json.dumps(payload), platform],
         capture_output=True,
         text=True,
         check=True,
-        env=env,
+        env=_python_subprocess_env(),
     )
     return json.loads(completed.stdout)
+
+
+def _start_full_read_record_subprocess(
+    trace_dir: Path, session_id: str, file_path: Path
+) -> subprocess.Popen[str]:
+    script = """
+import sys
+from pathlib import Path
+from vibeforcer.state import HookStateStore
+
+store = HookStateStore(Path(sys.argv[1]))
+store.record_full_read(sys.argv[2], sys.argv[3])
+""".strip()
+    return subprocess.Popen(
+        [sys.executable, "-c", script, str(trace_dir), session_id, str(file_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_python_subprocess_env(),
+    )
 
 
 def _finding(result_rule_id: str, findings: list[RuleFinding]) -> RuleFinding | None:
@@ -385,6 +409,33 @@ class TestHookStateStore:
         store._save_state({"full_reads": {key: int(time()) - store._TTL_SECONDS - 5}})
 
         assert not store.has_full_read("session-a", str(tmp_path / "module.py"))
+
+    def test_parallel_subprocess_writes_complete_without_losing_entries(
+        self, tmp_path: Path
+    ) -> None:
+        store = HookStateStore(tmp_path)
+        targets = []
+        processes = []
+        for idx in range(8):
+            target = tmp_path / f"module_{idx}.py"
+            target.write_text(f"value = {idx}\n", encoding="utf-8")
+            targets.append(target)
+            processes.append(
+                _start_full_read_record_subprocess(tmp_path, f"session-{idx}", target)
+            )
+
+        for process in processes:
+            try:
+                _, stderr = process.communicate(timeout=10)
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                raise AssertionError("hook-state write subprocess timed out") from exc
+            assert process.returncode == 0, stderr
+
+        state = store._load_state()
+        assert len(state["full_reads"]) == len(targets)
+        for idx, target in enumerate(targets):
+            assert store.has_full_read(f"session-{idx}", str(target))
 
 
 class TestSearchReminderCurrentGuards:
