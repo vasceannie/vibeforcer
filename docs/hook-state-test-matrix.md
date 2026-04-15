@@ -145,9 +145,20 @@ Goal: keep the spec behavioral, while forcing the implementation to fit the real
 ### Open design questions
 
 - In-memory cache, file-backed store, or another lightweight IPC mechanism?
+
+  File-backed state under the existing trace directory. Hooks run in separate subprocesses, so in-memory state would not satisfy the subprocess-boundary spec.
+
 - What is the canonical path key for symlinks, worktrees, and relative paths?
+
+  Resolve relative paths against `cwd` and normalize to the resolved absolute path. Keep worktrees distinct unless they resolve to the same underlying file.
+
 - What is the retention policy for abandoned sessions?
+
+  Expire idle state after 1 hour.
+
 - Should repeat metadata live only in findings, or also in trace output and stop-time summaries?
+
+  Trace and summary output as well as findings metadata.
 
 ## Execution Order
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -100,8 +101,28 @@ class FullFileReadRule(Rule):
     title: str = "Enforce full file read"
     events: tuple[str, ...] = ("PreToolUse", "PermissionRequest")
 
-    EXEMPT_SUFFIXES: tuple[str, ...] = (".md", ".json", ".yaml", ".yml", ".txt", ".log", ".csv")
+    EXEMPT_SUFFIXES: tuple[str, ...] = (
+        ".md",
+        ".json",
+        ".jsonl",
+        ".yaml",
+        ".yml",
+        ".txt",
+        ".log",
+        ".csv",
+    )
     LARGE_FILE_BYTES: int = 40_000
+
+    @staticmethod
+    def _normalize_read_path(ctx: "HookContext", target: str) -> str:
+        path = Path(target)
+        if not path.is_absolute():
+            path = ctx.cwd / path
+        return str(path.resolve(strict=False))
+
+    @staticmethod
+    def _is_full_read(tool_input: Mapping[str, object]) -> bool:
+        return "offset" not in tool_input and "limit" not in tool_input
 
     @override
     def evaluate(self, ctx: "HookContext") -> list[RuleFinding]:
@@ -109,13 +130,16 @@ class FullFileReadRule(Rule):
             return []
         if ctx.tool_name != "Read":
             return []
-        ti = ctx.tool_input
-        if "offset" not in ti and "limit" not in ti:
-            return []
         target = _find_read_target(ctx.candidate_paths, self.EXEMPT_SUFFIXES)
         if target is None:
             return []
-        if _is_large_file(target, self.LARGE_FILE_BYTES):
+        normalized_target = self._normalize_read_path(ctx, target)
+        if self._is_full_read(ctx.tool_input):
+            ctx.state.record_full_read(ctx.session_id, normalized_target)
+            return []
+        if ctx.state.has_full_read(ctx.session_id, normalized_target):
+            return []
+        if _is_large_file(normalized_target, self.LARGE_FILE_BYTES):
             return []
         msg = (
             f"Please read `{target}` in full first "
@@ -129,7 +153,7 @@ class FullFileReadRule(Rule):
                 severity=Severity.MEDIUM,
                 decision="deny",
                 message=msg,
-                metadata={"path": target, "target": "tool_input"},
+                metadata={"path": normalized_target, "target": "tool_input"},
             )
         ]
 

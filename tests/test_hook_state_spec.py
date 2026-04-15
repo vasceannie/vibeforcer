@@ -242,10 +242,6 @@ class TestFullReadCurrentGuards:
         assert_denied_by(result, "BUILTIN-ENFORCE-FULL-READ")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="stateful full-read tracking and .jsonl carveout are not implemented yet",
-)
 class TestFullReadStatefulSpec:
     def test_partial_jsonl_read_is_allowed_when_rule_enabled(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

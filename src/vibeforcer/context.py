@@ -6,6 +6,7 @@ from pathlib import Path
 from vibeforcer._types import ObjectDict, ObjectMapping
 from vibeforcer.config import load_config
 from vibeforcer.models import ContentTarget, RuntimeConfig
+from vibeforcer.state import HookStateStore
 from vibeforcer.trace import TraceWriter
 from vibeforcer.util.payloads import HookPayload
 
@@ -15,6 +16,7 @@ class HookContext:
     payload: HookPayload
     config: RuntimeConfig
     trace: TraceWriter
+    state: HookStateStore
 
     @property
     def event_name(self) -> str:
@@ -61,4 +63,5 @@ def build_context(payload_dict: ObjectMapping) -> HookContext:
     config = load_config()
     trace = TraceWriter(config.trace_dir)
     payload = HookPayload(payload_dict, config)
-    return HookContext(payload=payload, config=config, trace=trace)
+    state = HookStateStore(config.trace_dir)
+    return HookContext(payload=payload, config=config, trace=trace, state=state)
