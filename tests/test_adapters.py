@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import json
+from pathlib import Path
 import vibeforcer.engine as engine_module
 from typing import cast
 
@@ -31,6 +32,20 @@ from vibeforcer.engine import evaluate_payload
 from vibeforcer.models import RuleFinding, Severity
 
 FIXTURES_DIR = test_support.BUNDLE_ROOT / "fixtures"
+_RESOURCES_DIR = test_support.BUNDLE_ROOT / "src" / "vibeforcer" / "resources"
+
+
+def _config_with_enabled_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *rule_ids: str
+) -> None:
+    raw = json.loads((_RESOURCES_DIR / "defaults.json").read_text(encoding="utf-8"))
+    enabled = dict(raw.get("enabled_rules", {}))
+    for rule_id in rule_ids:
+        enabled[rule_id] = True
+    raw["enabled_rules"] = enabled
+    config_path = tmp_path / "adapter-spec-config.json"
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setenv("VIBEFORCER_CONFIG", str(config_path))
 
 
 def require_rendered(output: ObjectDict | None) -> ObjectDict:
@@ -2064,6 +2079,39 @@ class TestCrossPlatform:
         assert "GIT-001" in claude_ids, "Claude should find GIT-001"
         assert "GIT-001" in codex_ids, "Codex should find GIT-001"
         assert "GIT-001" in opencode_ids, "OpenCode should find GIT-001"
+
+    def test_full_read_unlock_survives_relative_follow_up_for_claude_and_codex(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Adapter/platform selection must not break stateful read-path normalization."""
+        _config_with_enabled_rules(tmp_path, monkeypatch, "BUILTIN-ENFORCE-FULL-READ")
+        target = tmp_path / "module.py"
+        target.write_text("print('hi')\nprint('bye')\n", encoding="utf-8")
+
+        initial_payload = {
+            "session_id": "adapter-cross-read",
+            "cwd": str(tmp_path),
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Read",
+            "tool_input": {"file_path": str(target)},
+        }
+        follow_up_payload = {
+            "session_id": "adapter-cross-read",
+            "cwd": str(tmp_path),
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "module.py", "offset": 1, "limit": 1},
+        }
+
+        for platform in ("claude", "codex"):
+            first = evaluate_payload(dict(initial_payload), platform=platform)
+            second = evaluate_payload(dict(follow_up_payload), platform=platform)
+            denied_rules = {finding.rule_id for finding in second.findings}
+
+            assert not first.findings, f"{platform} full read should stay clean"
+            assert "BUILTIN-ENFORCE-FULL-READ" not in denied_rules, (
+                f"{platform} should preserve the full-read unlock across path forms"
+            )
 
 
 # ===========================================================================
