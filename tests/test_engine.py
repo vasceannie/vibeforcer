@@ -58,6 +58,7 @@ def _disabled_rule_findings(
     from vibeforcer.config import load_config
     from vibeforcer.context import HookContext
     from vibeforcer.rules import build_rules
+    from vibeforcer.state import HookStateStore
     from vibeforcer.trace import TraceWriter
     from vibeforcer.util.payloads import HookPayload
 
@@ -67,7 +68,8 @@ def _disabled_rule_findings(
     try:
         trace = TraceWriter(config.trace_dir)
         hp = HookPayload(payload, config)
-        ctx = HookContext(payload=hp, config=config, trace=trace)
+        state = HookStateStore(config.trace_dir)
+        ctx = HookContext(payload=hp, config=config, trace=trace, state=state)
         target_rule = next(
             (rule for rule in build_rules(ctx) if rule.rule_id == rule_id), None
         )
@@ -498,7 +500,7 @@ class TestBaselineGuard:
             }
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "BASELINE-001", "technical debt")
+        assert_denied_by(result, "BASELINE-001", "increasing the baseline")
 
     @pytest.mark.parametrize(
         "command",
@@ -857,13 +859,17 @@ def test_build_rules_survives_python_ast_import_error(
     from vibeforcer.config import load_config
     from vibeforcer.context import HookContext
     import vibeforcer.rules as rules_mod
+    from vibeforcer.state import HookStateStore
     from vibeforcer.trace import TraceWriter
     from vibeforcer.util.payloads import HookPayload
 
     payload = load_fixture("pretool_git_no_verify.json")
     config = load_config()
     trace = TraceWriter(config.trace_dir)
-    ctx = HookContext(payload=HookPayload(payload, config), config=config, trace=trace)
+    state = HookStateStore(config.trace_dir)
+    ctx = HookContext(
+        payload=HookPayload(payload, config), config=config, trace=trace, state=state
+    )
 
     healthy_ids = {rule.rule_id for rule in rules_mod.build_rules(ctx)}
     assert "PY-CODE-008" in healthy_ids
