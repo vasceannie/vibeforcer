@@ -64,7 +64,7 @@ def parse_module(source: str, max_chars: int) -> ast.Module | None:
         return None
     try:
         return ast.parse(source)
-    except SyntaxError:
+    except (SyntaxError, RecursionError):
         return None
 
 
