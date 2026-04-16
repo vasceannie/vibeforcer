@@ -20,36 +20,139 @@ if TYPE_CHECKING:
 # even when preceded by a large tool response (e.g., a full file read).
 _TAIL_BYTES = 32_768
 
+_VIBEFORCER_REPO_SUFFIX = "/claude/vibeforcer"
 
-def _is_worktree(path_str: str) -> bool:
+
+def _resolve_candidate_path(path_str: str, cwd: Path | None = None) -> Path:
+    """Resolve a candidate path relative to the hook cwd when needed."""
+    path = Path(path_str).expanduser()
+    if not path.is_absolute() and cwd is not None:
+        path = cwd / path
+    return path.resolve()
+
+
+def _git_output(
+    args: list[str], cwd: Path | None = None, timeout: int = 3
+) -> str | None:
+    """Run a git command and return stripped stdout on success."""
+    try:
+        result = subprocess.run(
+            args,
+            cwd=str(cwd) if cwd is not None else None,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    output = result.stdout.strip()
+    return output or None
+
+
+def _git_repo_root(path_str: str, cwd: Path | None = None) -> Path | None:
+    """Return the git toplevel containing *path_str*, if any."""
+    resolved = _resolve_candidate_path(path_str, cwd)
+    base = resolved if resolved.is_dir() else resolved.parent
+    repo_root = _git_output(
+        ["git", "-C", str(base), "rev-parse", "--show-toplevel"], timeout=3
+    )
+    return Path(repo_root) if repo_root else None
+
+
+def _normalize_git_remote(url: str) -> str:
+    """Normalize a git remote for comparison."""
+    raw = url.strip().rstrip("/")
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+
+    ssh_match = re.match(r"^git@([^:]+):(.+)$", raw)
+    if ssh_match:
+        host = ssh_match.group(1).lower()
+        path = ssh_match.group(2).strip("/")
+        return f"{host}/{path}"
+
+    proto_match = re.match(r"^[a-z]+://([^/]+)/(.+)$", raw, re.IGNORECASE)
+    if proto_match:
+        host = proto_match.group(1).lower()
+        path = proto_match.group(2).strip("/")
+        return f"{host}/{path}"
+
+    return raw.lower()
+
+
+def _is_worktree(path_str: str, cwd: Path | None = None) -> bool:
     """Check if a path is inside a git worktree (not the main working tree).
 
     A worktree has a .git *file* (not directory) containing "gitdir: ..." pointing
     back to the main repo's .git/worktrees/<name>/ directory.
     """
-    try:
-        p = Path(path_str).resolve()
-        # Walk up to find the git toplevel
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(p) if p.is_dir() else str(p.parent),
-                "rev-parse",
-                "--show-toplevel",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        if result.returncode != 0:
-            return False
-        toplevel = Path(result.stdout.strip())
-        git_entry = toplevel / ".git"
-        # In a worktree, .git is a file (not a directory) containing "gitdir: ..."
-        return git_entry.is_file()
-    except (OSError, subprocess.TimeoutExpired):
+    repo_root = _git_repo_root(path_str, cwd)
+    if repo_root is None:
         return False
+    git_entry = repo_root / ".git"
+    # In a worktree, .git is a file (not a directory) containing "gitdir: ..."
+    return git_entry.is_file()
+
+
+def _is_vibeforcer_repo(path_str: str, cwd: Path | None = None) -> bool:
+    """Return True when the target path belongs to the vibeforcer repo."""
+    repo_root = _git_repo_root(path_str, cwd)
+    if repo_root is None:
+        return False
+    remote = _git_output(
+        ["git", "-C", str(repo_root), "remote", "get-url", "origin"], timeout=5
+    )
+    if remote is None:
+        return False
+    normalized = _normalize_git_remote(remote)
+    return normalized.endswith(_VIBEFORCER_REPO_SUFFIX)
+
+
+def _default_branch_name(repo_root: Path) -> str | None:
+    """Infer the repository default branch name."""
+    remote_head = _git_output(
+        ["git", "-C", str(repo_root), "symbolic-ref", "refs/remotes/origin/HEAD"],
+        timeout=5,
+    )
+    if remote_head and remote_head.startswith("refs/remotes/origin/"):
+        return remote_head.rsplit("/", 1)[-1]
+
+    local_heads = _git_output(
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads",
+        ],
+        timeout=5,
+    )
+    if not local_heads:
+        return None
+
+    branches = {branch.strip() for branch in local_heads.splitlines() if branch.strip()}
+    if "main" in branches:
+        return "main"
+    if "master" in branches:
+        return "master"
+    if len(branches) == 1:
+        return next(iter(branches))
+    return None
+
+
+def _is_non_default_branch(path_str: str, cwd: Path | None = None) -> bool:
+    """Return True when the target path is on a branch other than the default."""
+    repo_root = _git_repo_root(path_str, cwd)
+    if repo_root is None:
+        return False
+    current_branch = _git_output(
+        ["git", "-C", str(repo_root), "branch", "--show-current"], timeout=5
+    )
+    default_branch = _default_branch_name(repo_root)
+    return bool(current_branch and default_branch and current_branch != default_branch)
 
 
 def _command_has_word(command: str, word: str) -> bool:
@@ -313,12 +416,16 @@ def _check_config_path(path_value: str, ctx: HookContext) -> list[RuleFinding] |
 
 
 def _check_infra_path(path_value: str, ctx: HookContext) -> list[RuleFinding] | None:
-    """Check infra fragments — worktree-exempt."""
+    """Check infra fragments with a narrow vibeforcer worktree exception."""
     lowered = path_value.lower()
     for frag in _INFRA_FRAGMENTS:
         if frag not in lowered:
             continue
-        if _is_worktree(path_value):
+        if (
+            _is_worktree(path_value, ctx.cwd)
+            and _is_vibeforcer_repo(path_value, ctx.cwd)
+            and _is_non_default_branch(path_value, ctx.cwd)
+        ):
             return []
         if _is_safe_bash_for_path(ctx):
             return []

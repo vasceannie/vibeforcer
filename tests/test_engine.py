@@ -1458,6 +1458,95 @@ class TestConfigProtection:
         assert "CONFIG-003" not in finding_ids(result)
 
 
+class TestHookInfraWorktreeException:
+    def test_worktree_exception_requires_vibeforcer_repo_and_non_default_branch(
+        self, tmp_path: Path, pretool_write: WriteBuilder, monkeypatch: MonkeyPatch
+    ) -> None:
+        repo, worktree = _init_git_worktree(tmp_path)
+
+        def fake_git_output(
+            args: list[str], cwd: Path | None = None, timeout: int = 3
+        ) -> str | None:
+            if args[-3:] == ["remote", "get-url", "origin"]:
+                return "https://lab.baked.rocks/claude/vibeforcer.git"
+            result = subprocess.run(
+                args,
+                cwd=str(cwd) if cwd is not None else None,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            return result.stdout.strip() or None
+
+        monkeypatch.setattr(
+            "vibeforcer.rules.stop_rules._git_output",
+            fake_git_output,
+        )
+
+        result = evaluate_payload(
+            pretool_write(
+                ".claude/hooks/run-pretool.sh",
+                "echo hi\n",
+                cwd=str(worktree),
+            )
+        )
+        assert "GLOBAL-BUILTIN-HOOK-INFRA-EXEC" not in finding_ids(result)
+        assert repo.exists()
+
+    def test_worktree_exception_denied_on_default_branch(
+        self, tmp_path: Path, pretool_write: WriteBuilder, monkeypatch: MonkeyPatch
+    ) -> None:
+        _repo, worktree = _init_git_worktree(tmp_path)
+
+        def fake_git_output(
+            args: list[str], cwd: Path | None = None, timeout: int = 3
+        ) -> str | None:
+            if args[-3:] == ["remote", "get-url", "origin"]:
+                return "https://lab.baked.rocks/claude/vibeforcer.git"
+            if args[-2:] == ["branch", "--show-current"]:
+                return "feature/worktree-support"
+            if args[-2:] == ["symbolic-ref", "refs/remotes/origin/HEAD"]:
+                return "refs/remotes/origin/feature/worktree-support"
+            result = subprocess.run(
+                args,
+                cwd=str(cwd) if cwd is not None else None,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            return result.stdout.strip() or None
+
+        monkeypatch.setattr(
+            "vibeforcer.rules.stop_rules._git_output",
+            fake_git_output,
+        )
+
+        result = evaluate_payload(
+            pretool_write(
+                ".claude/hooks/run-pretool.sh",
+                "echo hi\n",
+                cwd=str(worktree),
+            )
+        )
+        assert_denied_by(result, "BUILTIN-PROTECTED-PATHS")
+
+    def test_worktree_exception_denied_for_non_vibeforcer_repo(
+        self, tmp_path: Path, pretool_write: WriteBuilder
+    ) -> None:
+        _repo, worktree = _init_git_worktree(tmp_path)
+
+        result = evaluate_payload(
+            pretool_write(
+                ".claude/hooks/run-pretool.sh",
+                "echo hi\n",
+                cwd=str(worktree),
+            )
+        )
+        assert_denied_by(result, "BUILTIN-PROTECTED-PATHS")
+
+
 # ===========================================================================
 # Regex rule coverage: linter config shell edits
 # ===========================================================================
