@@ -208,6 +208,17 @@ class TestInlinePayloadDenies:
         result = evaluate_payload(pretool_write("Makefile", "all:\n\techo hi\n"))
         assert_denied_by(result, "BUILTIN-PROTECTED-PATHS", "protected path")
 
+    def test_protected_staging_rule_file_denied(
+        self, pretool_write: WriteBuilder
+    ) -> None:
+        result = evaluate_payload(
+            pretool_write(
+                "src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py",
+                "from __future__ import annotations\n",
+            )
+        )
+        assert_denied_by(result, "BUILTIN-PROTECTED-PATHS", "protected path")
+
     def test_system_path(self, pretool_write: WriteBuilder) -> None:
         result = evaluate_payload(pretool_write("/etc/passwd", "x"))
         assert_denied_by(result, "GLOBAL-BUILTIN-SYSTEM-PROTECTION")
@@ -222,6 +233,14 @@ class TestInlinePayloadDenies:
 
     def test_exec_protection_write_config(self, pretool_write: WriteBuilder) -> None:
         result = evaluate_payload(pretool_write(".claude/hook-layer/config.json", "{}"))
+        assert_denied_by(result, "BUILTIN-PROTECTED-PATHS")
+
+    def test_exec_protection_bash_write_staging_rule(self, pretool_bash: BashBuilder) -> None:
+        result = evaluate_payload(
+            pretool_bash(
+                "echo '# temp' > src/vibeforcer/rules/python_ast/_staging/test_smell_rules.py"
+            )
+        )
         assert_denied_by(result, "BUILTIN-PROTECTED-PATHS")
 
     def test_security_bypass_permissions(self, pretool_write: WriteBuilder) -> None:

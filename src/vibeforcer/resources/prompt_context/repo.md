@@ -31,6 +31,7 @@
 - `.claude/hooks/*`, `.claude/hook-layer/config.json`
 - Linter configs: `.eslintrc*`, `.flake8`, `.pylintrc`, `ruff.toml`, `pyrightconfig*`, `biome.json`
 - Quality tests: `src/test/code-quality.test.ts`, `tests/quality/`
+- Staging hook-rule authoring surfaces: `src/vibeforcer/rules/python_ast/_staging/`
 
 ## Code Quality
 - No `TODO`, `FIXME`, `HACK`, `XXX` markers — track work in issues.

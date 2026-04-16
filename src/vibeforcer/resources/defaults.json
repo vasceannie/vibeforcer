@@ -16,7 +16,8 @@
     ".prettierrc*",
     "prettier.config.*",
     "tests/quality/",
-    "src/test/code-quality.test.ts"
+    "src/test/code-quality.test.ts",
+    "src/vibeforcer/rules/python_ast/_staging/"
   ],
   "sensitive_path_patterns": [
     "/.env",
