@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from vibeforcer.cli.cli import build_parser
 from vibeforcer._types import object_dict, string_value
 
@@ -28,6 +30,14 @@ def test_lint_baseline_respects_explicit_path() -> None:
         "baseline",
         "/tmp/example",
     )
+
+
+def test_lint_baseline_help_marks_command_disabled(capsys: object) -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["lint", "baseline", "--help"])
+    captured = capsys.readouterr()
+    assert "Disabled: repo-wide rebaselining is not allowed" in captured.out
 
 
 def test_lint_update_respects_explicit_path() -> None:

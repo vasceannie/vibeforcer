@@ -87,7 +87,14 @@ class BaselineGuardRule(Rule):
         # Catch CLI commands that regenerate the baseline
         if ctx.bash_command:
             cmd = ctx.bash_command.strip()
-            if "quality-gate baseline" in cmd:
+            if any(
+                token in cmd
+                for token in (
+                    "quality-gate baseline",
+                    "vibeforcer lint baseline",
+                    "vfc lint baseline",
+                )
+            ):
                 return [
                     RuleFinding(
                         rule_id=self.rule_id,
@@ -95,8 +102,9 @@ class BaselineGuardRule(Rule):
                         severity=Severity.HIGH,
                         decision="deny",
                         message=(
-                            "Running `quality-gate baseline` is blocked. "
-                            "Baselines must only decrease (fix violations), never increase. "
+                            "Running repo-wide baseline generation is blocked. "
+                            "`quality-gate baseline`, `vibeforcer lint baseline`, and `vfc lint baseline` "
+                            "all hide technical debt by normalizing existing violations. "
                             "Fix the violations instead of inflating the baseline."
                         ),
                     )

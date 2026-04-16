@@ -47,7 +47,7 @@
 
 ## Baselines
 - `baselines.json` violations must only decrease, never increase.
-- Do not run `quality-gate baseline .` to re-baseline away violations.
+- Do not run `quality-gate baseline .`, `vibeforcer lint baseline .`, or `vfc lint baseline .` to re-baseline away violations.
 
 ## Before Stopping
 - Run `make quality` or the project quality command.

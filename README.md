@@ -29,8 +29,7 @@ vibeforcer stats --days 7
 
 # Lint a project for code quality
 vibeforcer lint check .           # scan for violations
-vibeforcer lint baseline .         # freeze current state
-vibeforcer lint init .             # scaffold quality_gate.toml
+vibeforcer lint init .            # scaffold quality_gate.toml
 ```
 
 ## Supported Platforms
@@ -109,8 +108,8 @@ vibeforcer version
 # Scan a project for violations (compares against baseline)
 vibeforcer lint check [path]
 
-# Generate/update baselines.json (freeze current violations)
-vibeforcer lint baseline [path]
+# Repo-wide rebaselining is intentionally disabled
+# Do not run vibeforcer lint baseline [path]
 
 # Scaffold a quality_gate.toml config
 vibeforcer lint init [path]
@@ -161,6 +160,7 @@ Per-repo overrides via `quality_gate.toml` in the repo root.
 - See "28 Batch Detectors" table above
 - Configured via `quality_gate.toml` in each project
 - Baseline tracking: only *new* violations fail the gate
+- Repo-wide baseline regeneration is disabled to prevent agents from normalizing technical debt
 
 ### Declarative Regex Rules (39)
 Configured in `config.json` — covers:

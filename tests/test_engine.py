@@ -151,7 +151,7 @@ def _assert_bash_negative_case(
         ("pretool_ts_todo.json", "TS-QUALITY-003", "TODO"),
         ("pretool_test_loop_assert.json", "PY-TEST-003", ""),
         ("pretool_fixture_outside_conftest.json", "PY-TEST-004", "conftest"),
-        ("pretool_baseline_inflate.json", "BASELINE-001", "baseline"),
+        ("pretool_baseline_inflate.json", "BASELINE-001", "technical debt"),
     ],
     ids=lambda p: p if isinstance(p, str) and p.endswith(".json") else "",
 )
@@ -498,7 +498,28 @@ class TestBaselineGuard:
             }
         )
         result = evaluate_payload(payload)
-        assert_denied_by(result, "BASELINE-001", "inflation")
+        assert_denied_by(result, "BASELINE-001", "technical debt")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "quality-gate baseline .",
+            "vibeforcer lint baseline .",
+            "vfc lint baseline .",
+        ],
+    )
+    def test_repo_wide_baseline_commands_blocked(self, command: str) -> None:
+        payload: ObjectDict = object_dict(
+            {
+                "session_id": "t",
+                "cwd": str(BUNDLE_ROOT),
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            }
+        )
+        result = evaluate_payload(payload)
+        assert_denied_by(result, "BASELINE-001", "technical debt")
 
     def test_decrease_allowed(self, tmp_path: Path) -> None:
         existing = self._write_baseline(

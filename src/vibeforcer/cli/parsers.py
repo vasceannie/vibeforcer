@@ -109,7 +109,10 @@ def _add_lint_parsers(sub: SubparserRegistry) -> None:
     _ = check.add_argument("path", nargs="?", default=".")
     check.set_defaults(func=cmd_lint, lint_command="check")
 
-    baseline = lint_sub.add_parser("baseline", help="Generate baselines.json")
+    baseline = lint_sub.add_parser(
+        "baseline",
+        help="Disabled: repo-wide rebaselining is not allowed",
+    )
     _ = baseline.add_argument("path", nargs="?", default=".")
     baseline.set_defaults(func=cmd_lint, lint_command="baseline")
 

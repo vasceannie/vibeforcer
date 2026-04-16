@@ -4,6 +4,11 @@ import argparse
 import sys
 from pathlib import Path
 
+BASELINE_DISABLED_MESSAGE = (
+    "`vibeforcer lint baseline` is disabled. Repo-wide rebaselining hides technical debt. "
+    "Fix violations directly, or make a deliberate, human-reviewed baselines.json change that only reduces debt."
+)
+
 from vibeforcer.lint._baseline import Violation
 
 from vibeforcer.constants import MAX_LINT_VIOLATIONS_SHOWN
@@ -64,7 +69,7 @@ def _print_lint_summary(
             print(
                 _colorize(
                     "33",
-                    f"  ℹ {total_f} fixed — run `vibeforcer lint baseline` to lock that in",
+                    f"  ℹ {total_f} fixed — update baselines.json only as a deliberate debt reduction, not via repo-wide rebaselining",
                     color,
                 )
             )
@@ -110,39 +115,9 @@ def _lint_check(root: Path) -> int:
     return _print_lint_summary(total_v, total_n, total_f, color)
 
 
-def _lint_baseline(root: Path) -> int:
-    from vibeforcer.lint import __version__ as lint_version
-    from vibeforcer.lint._baseline import save_baseline
-    from vibeforcer.lint._collectors import run_all_collectors
-    from vibeforcer.lint._config import load_config as load_qg_config
-    from vibeforcer.lint._config import set_config as set_qg_config
-    from vibeforcer.lint._helpers import find_source_files, find_test_files
-
-    cfg = load_qg_config(root)
-    set_qg_config(cfg)
-    src_files = find_source_files()
-    test_files = find_test_files()
-
-    print(f"vibeforcer lint baseline {lint_version}")
-    print(f"  project: {cfg.project_root}")
-    print()
-
-    collectors = run_all_collectors(src_files, test_files)
-    all_violations: dict[str, list[Violation]] = {}
-    for rule_name, violations in collectors:
-        if violations:
-            all_violations[rule_name] = violations
-            print(f"  {rule_name}: {len(violations)}")
-
-    save_baseline(all_violations)
-    total = sum(len(violations) for violations in all_violations.values())
-    baseline_path = cfg.baseline_path or (cfg.project_root / "baselines.json")
-    print()
-    print(
-        f"✓ Baseline saved: {total} violation(s) across {len(all_violations)} rule(s)"
-    )
-    print(f"  → {baseline_path}")
-    return 0
+def _lint_baseline(_root: Path) -> int:
+    print(BASELINE_DISABLED_MESSAGE)
+    return 1
 
 
 def _lint_init(root: Path) -> int:
