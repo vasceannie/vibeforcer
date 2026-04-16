@@ -222,12 +222,20 @@ class HookPayload:
             item_dict = object_dict(item)
             if not item_dict:
                 continue
-            path_item = extract_path_from_mapping(item_dict)
+            path_item = extract_path_from_mapping(item_dict) or path_value
             content_item = extract_content_from_mapping(item_dict)
             if path_item and content_item:
                 targets.append(
                     ContentTarget(
                         path=path_item, content=content_item, source="multi_edit"
+                    )
+                )
+                continue
+            old_text = first_present(item_dict, ("oldText", "old_text"), strip=False)
+            if path_item and old_text:
+                targets.append(
+                    ContentTarget(
+                        path=path_item, content=old_text, source="multi_edit_old"
                     )
                 )
 

@@ -47,6 +47,20 @@ class TestLongLines(unittest.TestCase):
         result = evaluate_payload(payload)
         _assert_denied_by(result, "PY-CODE-010")
 
+    def test_long_line_blocked_for_top_level_path_edit_shape(self) -> None:
+        long_line = "x" * 400 + chr(10)
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Edit",
+            "tool_input": {
+                "path": "src/main.py",
+                "edits": [{"oldText": "x = 1\n", "newText": long_line}],
+            },
+            "cwd": str(BUNDLE_ROOT),
+        }
+        result = evaluate_payload(payload)
+        _assert_denied_by(result, "PY-CODE-010")
+
     def test_120_ok(self) -> None:
         line = "x" * 120 + chr(10)
         payload = {
