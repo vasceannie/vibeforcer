@@ -144,6 +144,27 @@ def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
     ]
 
 
+def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
+    """Remove the contiguous top-of-file docstring/import preamble."""
+    idx = 0
+    if idx < len(body):
+        first = body[idx]
+        is_doc = (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        )
+        if is_doc:
+            idx += 1
+    while idx < len(body):
+        stmt = body[idx]
+        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            idx += 1
+            continue
+        break
+    return body[idx:]
+
+
 def _is_import_stmt(stmt: ast.stmt) -> bool:
     return isinstance(stmt, (ast.Import, ast.ImportFrom))
 
@@ -241,7 +262,7 @@ class PythonRepeatedBlocksRule(Rule):
                 body = _skip_docstring(node.body)
                 scope = node.name
             elif isinstance(node, ast.Module):
-                body = _strip_future_imports(node.body)
+                body = _strip_module_preamble(node.body)
                 scope = "<module>"
             else:
                 continue

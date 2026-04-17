@@ -106,6 +106,21 @@ class TestRepeatedBlocks:
         findings = self._eval(source)
         assert len(findings) == 0, "Import blocks should not trigger"
 
+    def test_no_false_positive_module_import_preamble(self):
+        """Top-of-file docstring/import preambles should not count as duplicates."""
+        source = textwrap.dedent('''\
+            """Module docs."""
+            from __future__ import annotations
+            import os
+            import sys
+
+            value = compute_result(data)
+            total = value + 1
+            emit(total)
+        ''')
+        findings = self._eval(source)
+        assert len(findings) == 0, "Module import preamble should not trigger"
+
     def test_no_false_positive_different_logic(self):
         """Blocks with different logic should not be flagged."""
         source = textwrap.dedent("""\
@@ -121,6 +136,25 @@ class TestRepeatedBlocks:
         """)
         findings = self._eval(source)
         assert len(findings) == 0, "Different blocks should not trigger"
+
+    def test_duplicate_function_bodies_still_trigger_after_import_preamble(self):
+        """Ignoring the module preamble must not hide real duplicate bodies."""
+        source = textwrap.dedent("""\
+            import os
+            import sys
+
+            def first():
+                data = load_items()
+                normalized = normalize(data)
+                return persist(normalized)
+
+            def second():
+                payload = load_items()
+                cleaned = normalize(payload)
+                return persist(cleaned)
+        """)
+        findings = self._eval(source)
+        assert len(findings) >= 1, "Real duplicate bodies should still trigger"
 
 
 # ---------------------------------------------------------------------------
