@@ -9,10 +9,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
+
+from vibeforcer._types import ObjectDict
 
 from typing_extensions import override
 
@@ -37,6 +39,7 @@ class Violation:
     relative_path: str
     identifier: str
     detail: str = ""
+    metadata: ObjectDict = field(default_factory=dict)
 
     @property
     def stable_id(self) -> str:

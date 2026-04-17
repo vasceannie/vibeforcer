@@ -110,11 +110,18 @@ def run_all_collectors(
     """Run all detectors and return (rule_name, violations) pairs."""
     from vibeforcer.lint._detectors.code_smells import detect_oversized_modules
     from vibeforcer.lint._detectors.duplicates import detect_repeated_literals
+    from vibeforcer.lint._config import get_config
+    from vibeforcer.quality.constant_index import (
+        build_project_constant_index,
+        set_session_constant_index,
+    )
 
     parsed_src = parse_files(src_files)
     parsed_tests = parse_files(test_files)
     oversized = detect_oversized_modules(src_files)
-    literals = detect_repeated_literals(parsed_src)
+    constant_index = build_project_constant_index(get_config().project_root)
+    set_session_constant_index(constant_index)
+    literals = detect_repeated_literals(parsed_src, constant_index=constant_index)
 
     return [
         *_structure_src_collectors(src_files, parsed_src, oversized, literals),

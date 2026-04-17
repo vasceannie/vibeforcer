@@ -26,6 +26,12 @@ from vibeforcer.lint._helpers import (
     find_source_files,
     function_body_lines,
 )
+from vibeforcer.quality.constant_index import (
+    ConstantIndex,
+    build_project_constant_index,
+    set_session_constant_index,
+    suggest_constant_name,
+)
 from .wrappers import call_name
 
 
@@ -380,10 +386,15 @@ def _collect_literals(
 
 def detect_repeated_literals(
     files: list[Path] | list[ParsedFile] | None = None,
+    *,
+    constant_index: ConstantIndex | None = None,
 ) -> list[Violation]:
     """Flag magic numbers and string literals used excessively."""
     cfg = get_config()
     parsed = ensure_parsed(files, fallback=find_source_files())
+    if constant_index is None:
+        constant_index = build_project_constant_index(cfg.project_root)
+    set_session_constant_index(constant_index)
     num_counts, str_counts = _collect_literals(
         parsed, cfg.allowed_numbers, cfg.allowed_strings
     )
@@ -401,12 +412,40 @@ def detect_repeated_literals(
             )
     for val, fset in str_counts.items():
         if len(fset) > cfg.max_repeated_string_literals:
+            constant_match = constant_index.find_string_constant(val)
+            metadata: dict[str, object]
+            detail_suffix = ""
+            if constant_match is not None:
+                relative = constant_match.path
+                try:
+                    relative = constant_match.path.relative_to(cfg.project_root)
+                except ValueError:
+                    pass
+                metadata = {
+                    "already_defined": {
+                        "name": constant_match.name,
+                        "path": str(relative),
+                        "line": constant_match.lineno,
+                    }
+                }
+                detail_suffix = (
+                    f"; already defined as {constant_match.name} "
+                    + f"in {relative}:{constant_match.lineno}"
+                )
+            else:
+                candidate = suggest_constant_name(val)
+                metadata = {"candidate_constant_name": candidate}
+                detail_suffix = f"; consider `{candidate}`"
             violations.append(
                 Violation(
                     rule="repeated-string-literal",
                     relative_path="<project>",
                     identifier=repr(val)[:40],
-                    detail=f"appears in {len(fset)} files (max: {cfg.max_repeated_string_literals})",
+                    detail=(
+                        f"appears in {len(fset)} files "
+                        + f"(max: {cfg.max_repeated_string_literals}){detail_suffix}"
+                    ),
+                    metadata=metadata,
                 )
             )
     return violations

@@ -6,6 +6,8 @@ import ast
 from pathlib import Path
 
 from vibeforcer.lint._detectors.duplicates import _collect_block_windows
+from vibeforcer.lint._detectors.duplicates import detect_repeated_literals
+from vibeforcer.lint._config import load_config, set_config
 from vibeforcer.lint._helpers import (
     ParsedFile,
     build_parent_map,
@@ -96,6 +98,45 @@ class TestCollectBlockWindowsImportCanonicalization:
         members = [member for group in groups.values() for member in group]
         assert any(rel == "a.py" and start == 4 for rel, _, start, _ in members)
         assert any(rel == "b.py" and start == 4 for rel, _, start, _ in members)
+
+
+class TestRepeatedStringLiteralMetadata:
+    def test_marks_already_defined_constant_match(self, tmp_path: Path) -> None:
+        _ = (tmp_path / "src").mkdir()
+        _ = (tmp_path / "src" / "constants.py").write_text(
+            'SHARED_ERROR = "E_CONN_RESET"\n', encoding="utf-8"
+        )
+        cfg = load_config(tmp_path)
+        set_config(cfg)
+
+        parsed = [
+            _make_parsed(f'print("E_CONN_RESET")\n', rel=f"src/file_{idx}.py")
+            for idx in range(11)
+        ]
+        violations = detect_repeated_literals(parsed)
+        repeated = [v for v in violations if v.rule == "repeated-string-literal"]
+        assert repeated, "expected repeated-string-literal violation"
+        metadata = repeated[0].metadata
+        assert "already_defined" in metadata
+        already_defined = metadata["already_defined"]
+        assert isinstance(already_defined, dict)
+        assert already_defined["name"] == "SHARED_ERROR"
+
+    def test_suggests_candidate_name_when_constant_missing(self, tmp_path: Path) -> None:
+        _ = (tmp_path / "src").mkdir()
+        cfg = load_config(tmp_path)
+        set_config(cfg)
+
+        parsed = [
+            _make_parsed('print("retry later")\n', rel=f"src/file_{idx}.py")
+            for idx in range(11)
+        ]
+        violations = detect_repeated_literals(parsed)
+        repeated = [v for v in violations if v.rule == "repeated-string-literal"]
+        assert repeated, "expected repeated-string-literal violation"
+        metadata = repeated[0].metadata
+        assert "candidate_constant_name" in metadata
+        assert metadata["candidate_constant_name"] == "RETRY_LATER"
 
     def test_same_body_different_imports_duplicate_alert_still_fires(self):
         """Body-only duplicate detection still works when imports differ."""

@@ -18,6 +18,7 @@ from vibeforcer.enrichment import (
     find_parametrize_examples,
     enrich_findings,
 )
+from vibeforcer.enrichment import quality_enrichers
 from vibeforcer.models import RuleFinding, Severity
 
 
@@ -1055,3 +1056,26 @@ class TestPYQUALITY009Enrichment:
         assert "pathlib" in reason.lower() or "Path(" in reason, (
             f"Expected pathlib suggestion: {reason}"
         )
+
+
+class TestEnrichmentConstantIndexScope:
+    def test_unrelated_quality_rule_does_not_build_constant_index(
+        self, tmp_project: Path, monkeypatch
+    ) -> None:
+        calls: list[Path] = []
+
+        def _track_build(root: Path, **_: object) -> object:
+            calls.append(root)
+            return object()
+
+        monkeypatch.setattr(
+            quality_enrichers,
+            "build_project_constant_index",
+            _track_build,
+        )
+
+        code = 'DATA = "/home/user/data/file.csv"\n'
+        payload = _pretool_write_payload("src/loader.py", code, str(tmp_project))
+        result = evaluate_payload(payload)
+        test_support.assert_denied_by(result, "PY-QUALITY-009")
+        assert calls == []

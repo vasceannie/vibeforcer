@@ -12,18 +12,12 @@ from vibeforcer.enrichment._helpers import (
     resolve_path,
     safe_read,
 )
+from vibeforcer.quality.constant_index import build_project_constant_index
 
 if TYPE_CHECKING:
     from vibeforcer.context import HookContext
     from vibeforcer.models import RuleFinding
 
-
-_CONFIG_FILE_NAMES = (
-    "constants.py",
-    "config.py",
-    "settings.py",
-    "defaults.py",
-)
 
 _PATH_HINT_FILES = (
     "config.py",
@@ -37,14 +31,16 @@ _PATH_HINT_TOKENS = ("PATH", "DIR", "ROOT", "BASE_PATH", "DATA_DIR")
 
 
 def _find_constants_module(file_path: Path, root: Path) -> Path | None:
+    index = build_project_constant_index(root)
+    best = index.first_constants_file()
+    if best is not None:
+        return best
+
     search_dirs = (file_path.parent, file_path.parent.parent, root / "src")
     for base_dir in search_dirs:
-        if not base_dir.exists():
-            continue
-        for name in _CONFIG_FILE_NAMES:
-            candidate = base_dir / name
-            if candidate.exists():
-                return candidate
+        candidate = base_dir / "constants.py"
+        if candidate.exists():
+            return candidate
     return None
 
 
