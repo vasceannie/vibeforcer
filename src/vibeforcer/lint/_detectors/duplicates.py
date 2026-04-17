@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import copy
 import hashlib
+import sys
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Set
 from pathlib import Path
@@ -179,9 +180,63 @@ def _is_future_import(stmt: ast.stmt) -> bool:
     return isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__"
 
 
-def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
-    """Remove leading ``from __future__ import ...`` statements from *body*."""
-    return [s for s in body if not _is_future_import(s)]
+
+
+def _import_section(stmt: ast.Import | ast.ImportFrom) -> tuple[int, str]:
+    """Classify import into (section-order, section-name)."""
+    if _is_future_import(stmt):
+        return 0, "future"
+    if isinstance(stmt, ast.ImportFrom) and stmt.level > 0:
+        return 3, "first-party"
+
+    module_name = ""
+    if isinstance(stmt, ast.ImportFrom):
+        module_name = stmt.module or ""
+    elif stmt.names:
+        module_name = stmt.names[0].name
+
+    top = module_name.split(".", 1)[0]
+    if top == "vibeforcer":
+        return 3, "first-party"
+    if top in sys.stdlib_module_names:
+        return 1, "stdlib"
+    return 2, "third-party"
+
+
+def _canonical_alias(name: ast.alias) -> str:
+    if name.asname:
+        return f"{name.name} as {name.asname}"
+    return name.name
+
+
+def _canonical_import_stmt(stmt: ast.Import | ast.ImportFrom) -> str:
+    sec_order, section = _import_section(stmt)
+    del sec_order
+    if isinstance(stmt, ast.Import):
+        names = sorted((_canonical_alias(a) for a in stmt.names), key=str.casefold)
+        return f"{section}:import {', '.join(names)}"
+
+    names = sorted((_canonical_alias(a) for a in stmt.names), key=str.casefold)
+    dots = "." * stmt.level
+    module = f"{dots}{stmt.module or ''}"
+    return f"{section}:from {module} import {', '.join(names)}"
+
+
+def _canonicalize_import_block(body: list[ast.stmt]) -> tuple[str | None, set[int]]:
+    """Return canonical leading import block and its indices in *body*."""
+    indices: set[int] = set()
+    imports: list[ast.Import | ast.ImportFrom] = []
+    for idx, stmt in enumerate(body):
+        if not _is_import_stmt(stmt):
+            break
+        indices.add(idx)
+        imports.append(stmt)
+
+    if not imports:
+        return None, indices
+
+    canonical = sorted((_canonical_import_stmt(stmt) for stmt in imports), key=str.casefold)
+    return "\n".join(canonical), indices
 
 
 def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
@@ -370,14 +425,19 @@ def _collect_block_windows(
             if isinstance(node, _FUNC_TYPES):
                 body, scope = _skip_docstring(node.body), node.name
             elif isinstance(node, ast.Module):
-                body, scope = _strip_future_imports(node.body), "<module>"
+                body, scope = _skip_docstring(node.body), "<module>"
             else:
                 continue
             if len(body) < _MIN_BLOCK_SIZE:
                 continue
+
+            _, canonical_import_indices = _canonicalize_import_block(body)
             norms = [_normalize_ast(stmt) for stmt in body]
             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
-                if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                window_indices = range(i, i + _MIN_BLOCK_SIZE)
+                if any(j in canonical_import_indices for j in window_indices):
+                    continue
+                if all(_is_import_stmt(body[j]) for j in window_indices):
                     continue
                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
                 end = _end_lineno(body[i + _MIN_BLOCK_SIZE - 1], body[i].lineno)
