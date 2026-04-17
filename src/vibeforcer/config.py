@@ -152,6 +152,17 @@ def _load_json(path: Path) -> dict[str, object]:
         raise RuntimeError(f"Invalid JSON in {path}: {exc}") from exc
 
 
+
+
+def is_repo_enrolled(repo_root: Path | None = None) -> bool:
+    """Return True when repo_root contains quality_gate.toml."""
+    if repo_root is None:
+        repo_root = Path.cwd().resolve()
+    else:
+        repo_root = repo_root.resolve()
+    return (repo_root / "quality_gate.toml").exists()
+
+
 def is_repo_disabled(repo_root: Path | None = None) -> bool:
     """Check if the quality gate is disabled for a repo."""
     if repo_root is None:

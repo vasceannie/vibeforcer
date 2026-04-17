@@ -192,10 +192,33 @@ max_nesting_depth = 5
 max_line_length = 140
 ```
 
-Or opt out entirely:
+## Enforcement Modes
+
+vibeforcer now enforces in two layers using `quality_gate.toml` as the enrollment signal:
+
+- **outside_repo**: no `quality_gate.toml` in the current working repo root. Only always-on safety rules run.
+- **repo_strict**: `quality_gate.toml` exists and the repo is enabled. Always-on safety + full strict/project rules run.
+- **repo_relaxed**: `quality_gate.toml` exists, but `.noqualitygate`, `.no-quality-gate`, or `[quality_gate].enabled = false` is set. Only always-on safety rules run.
+
+Always-on safety protections are:
+
+- `BUILTIN-PROTECTED-PATHS`
+- `GLOBAL-BUILTIN-SENSITIVE-DATA`
+- `GLOBAL-BUILTIN-SYSTEM-PROTECTION`
+
+`skip_paths` no longer bypasses the engine. Matching paths only suppress the repo-strict rule family; always-on safety still runs.
+
+To place a repo into relaxed mode locally:
 
 ```bash
 touch .noqualitygate
+```
+
+Or in `quality_gate.toml`:
+
+```toml
+[quality_gate]
+enabled = false
 ```
 
 ## Testing

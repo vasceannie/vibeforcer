@@ -101,13 +101,18 @@ def _build_python_ast_rules(ctx: HookContext) -> list[Rule]:
     return python_ast_rules
 
 
-def build_rules(ctx: HookContext) -> list[Rule]:
-    rules: list[Rule] = [
-        PromptContextRule(),
-        FullFileReadRule(),
+def build_always_on_rules(ctx: HookContext) -> list[Rule]:
+    return [
         ProtectedPathsRule(),
         SensitiveDataRule(),
         SystemProtectionRule(),
+    ]
+
+
+def build_repo_strict_rules(ctx: HookContext) -> list[Rule]:
+    rules: list[Rule] = [
+        PromptContextRule(),
+        FullFileReadRule(),
         GitNoVerifyRule(),
         SearchReminderRule(),
         PostEditQualityRule(),
@@ -134,3 +139,8 @@ def build_rules(ctx: HookContext) -> list[Rule]:
         for regex_rule in ctx.config.regex_rules
     )
     return rules
+
+
+def build_rules(ctx: HookContext) -> list[Rule]:
+    """Backward-compatible aggregate of always-on and repo-strict rules."""
+    return [*build_always_on_rules(ctx), *build_repo_strict_rules(ctx)]

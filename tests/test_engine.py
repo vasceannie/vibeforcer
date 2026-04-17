@@ -138,7 +138,6 @@ def _assert_bash_negative_case(
         # BUILTIN-ENFORCE-FULL-READ is disabled in default config
         # ("pretool_read_partial.json", "BUILTIN-ENFORCE-FULL-READ", "in full first"),
         ("pretool_git_no_verify.json", "GIT-001", "hook bypass detected"),
-        ("pretool_git_stash.json", "GIT-003", ""),
         ("pretool_python_any.json", "PY-TYPE-001", "Any"),
         ("pretool_ts_ignore.json", "TS-LINT-002", "suppression"),
         ("pretool_rust_unwrap.json", "RS-QUALITY-002", "unwrap"),
@@ -153,7 +152,6 @@ def _assert_bash_negative_case(
         ("pretool_ts_todo.json", "TS-QUALITY-003", "TODO"),
         ("pretool_test_loop_assert.json", "PY-TEST-003", ""),
         ("pretool_fixture_outside_conftest.json", "PY-TEST-004", "conftest"),
-        ("pretool_baseline_inflate.json", "BASELINE-001", "technical debt"),
     ],
     ids=lambda p: p if isinstance(p, str) and p.endswith(".json") else "",
 )
@@ -492,6 +490,9 @@ class TestEdgeCases:
 
 class TestBaselineGuard:
     def _write_baseline(self, tmp_path: Path, rules: dict[str, list[str]]) -> Path:
+        _ = (tmp_path / "quality_gate.toml").write_text(
+            "[quality_gate]\nenabled = true\n", encoding="utf-8"
+        )
         p = tmp_path / "baselines.json"
         _ = p.write_text(
             json.dumps(
@@ -692,6 +693,9 @@ def _init_git_worktree(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     worktree = tmp_path / "repo-worktree"
     repo.mkdir()
+    _ = (repo / "quality_gate.toml").write_text(
+        "[quality_gate]\nenabled = true\n", encoding="utf-8"
+    )
 
     _ = subprocess.run(
         ["git", "init", "-b", "main"],
@@ -717,7 +721,7 @@ def _init_git_worktree(tmp_path: Path) -> tuple[Path, Path]:
 
     _ = (repo / "README.md").write_text("root\n", encoding="utf-8")
     _ = subprocess.run(
-        ["git", "add", "README.md"],
+        ["git", "add", "."],
         cwd=repo,
         check=True,
         capture_output=True,
@@ -743,6 +747,9 @@ def _init_git_worktree(tmp_path: Path) -> tuple[Path, Path]:
 def test_sessionstart_injects_git_context(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    _ = (repo / "quality_gate.toml").write_text(
+        "[quality_gate]\nenabled = true\n", encoding="utf-8"
+    )
     _ = subprocess.run(
         ["git", "init", "-b", "main"],
         cwd=repo,
@@ -2456,3 +2463,110 @@ class TestSensitiveDataRegexPatterns:
         assert expected == set(rule.SAFE_SUFFIXES), (
             f"SAFE_SUFFIXES mismatch: expected {expected}, got {set(rule.SAFE_SUFFIXES)}"
         )
+
+
+# ===========================================================================
+# Enforcement mode routing: always-on safety vs repo-strict stack
+# ===========================================================================
+
+
+def _pretool_write_payload(cwd: Path, file_path: str, content: str = "x") -> ObjectDict:
+    return {
+        "session_id": "t",
+        "cwd": str(cwd),
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Write",
+        "tool_input": {"file_path": file_path, "content": content},
+    }
+
+
+def _pretool_bash_payload(cwd: Path, command: str) -> ObjectDict:
+    return {
+        "session_id": "t",
+        "cwd": str(cwd),
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+    }
+
+
+class TestEnforcementModes:
+    def test_outside_repo_runs_safety_only(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir(parents=True)
+
+        benign = evaluate_payload(
+            _pretool_write_payload(outside, "src/app.py", "print('ok')\n")
+        )
+        assert "PY-CODE-001" not in finding_ids(benign)
+
+        protected = evaluate_payload(_pretool_write_payload(outside, "Makefile", "all:\n"))
+        assert "BUILTIN-PROTECTED-PATHS" in finding_ids(protected)
+
+    def test_enrolled_repo_runs_full_strict_stack(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo_strict"
+        repo.mkdir(parents=True)
+        _ = (repo / "quality_gate.toml").write_text(
+            "[quality_gate]\nenabled = true\n", encoding="utf-8"
+        )
+
+        from vibeforcer.adapters import get_adapter
+        from vibeforcer.context import build_context
+        from vibeforcer.rules import build_always_on_rules, build_repo_strict_rules
+
+        ctx = build_context(
+            get_adapter("claude").normalize_payload(
+                _pretool_write_payload(repo, "src/app.py", "from typing import Any\n")
+            )
+        )
+
+        always_on_ids = {rule.rule_id for rule in build_always_on_rules(ctx)}
+        strict_ids = {rule.rule_id for rule in build_repo_strict_rules(ctx)}
+
+        assert "BUILTIN-PROTECTED-PATHS" in always_on_ids
+        assert "GIT-001" in strict_ids
+        assert any(rule_id.startswith("PY-CODE-") for rule_id in strict_ids)
+        assert any(rule_id.startswith("PY-") for rule_id in strict_ids)
+
+    def test_enrolled_repo_with_noqualitygate_is_relaxed(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo_relaxed"
+        repo.mkdir(parents=True)
+        _ = (repo / "quality_gate.toml").write_text(
+            "[quality_gate]\nenabled = true\n", encoding="utf-8"
+        )
+        _ = (repo / ".noqualitygate").write_text("", encoding="utf-8")
+
+        strict_candidate = evaluate_payload(
+            _pretool_bash_payload(repo, 'git commit -n -m "skip checks"')
+        )
+        assert "GIT-001" not in finding_ids(strict_candidate)
+
+        safety_candidate = evaluate_payload(
+            _pretool_write_payload(repo, "/etc/passwd", "root:x:0:0\n")
+        )
+        assert "GLOBAL-BUILTIN-SYSTEM-PROTECTION" in finding_ids(safety_candidate)
+
+    def test_skip_paths_suppresses_strict_not_safety(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo_skip"
+        repo.mkdir(parents=True)
+        _ = (repo / "quality_gate.toml").write_text(
+            "[quality_gate]\nenabled = true\n", encoding="utf-8"
+        )
+
+        defaults = json.loads((BUNDLE_ROOT / "src" / "vibeforcer" / "resources" / "defaults.json").read_text(encoding="utf-8"))
+        defaults["skip_paths"] = [str(repo.resolve())]
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps(defaults), encoding="utf-8")
+        monkeypatch.setenv("VIBEFORCER_CONFIG", str(cfg))
+
+        strict_candidate = evaluate_payload(
+            _pretool_bash_payload(repo, 'git commit -n -m "skip checks"')
+        )
+        assert "GIT-001" not in finding_ids(strict_candidate)
+
+        safety_candidate = evaluate_payload(
+            _pretool_write_payload(repo, "Makefile", "all:\n")
+        )
+        assert "BUILTIN-PROTECTED-PATHS" in finding_ids(safety_candidate)

@@ -8,11 +8,13 @@ from time import monotonic
 from vibeforcer._types import ObjectDict
 from vibeforcer.adapters import get_adapter
 from vibeforcer.adapters.base import PlatformAdapter
-from vibeforcer.config import is_path_skipped, is_repo_disabled
+from typing import Literal
+
+from vibeforcer.config import is_path_skipped, is_repo_disabled, is_repo_enrolled
 from vibeforcer.context import HookContext, build_context
 from vibeforcer.enrichment import enrich_findings
 from vibeforcer.models import EngineResult, RuleFinding, Severity
-from vibeforcer.rules import build_rules
+from vibeforcer.rules import build_always_on_rules, build_repo_strict_rules
 from vibeforcer.rules.base import Rule
 from vibeforcer.util import warning
 
@@ -206,11 +208,34 @@ def _safe_enrich(
         ctx.trace.rule(_error_trace_payload(identity, "ENRICHMENT", exc, elapsed_ms))
 
 
-def _run_rules(ctx: HookContext, platform: str) -> _EvalAccumulator:
-    """Build and evaluate all applicable rules."""
+EnforcementMode = Literal["outside_repo", "repo_strict", "repo_relaxed"]
+
+
+def _resolve_enforcement_mode(ctx: HookContext) -> EnforcementMode:
+    repo_cwd = Path(ctx.cwd) if ctx.cwd else Path.cwd()
+    repo_root = repo_cwd.resolve()
+
+    if not is_repo_enrolled(repo_root):
+        return "outside_repo"
+
+    if is_repo_disabled(repo_root):
+        return "repo_relaxed"
+
+    return "repo_strict"
+
+
+def _run_rules(ctx: HookContext, platform: str, mode: EnforcementMode) -> _EvalAccumulator:
+    """Build and evaluate applicable rules for the selected enforcement mode."""
     acc = _EvalAccumulator()
     disabled = set(ctx.config.disabled_rules)
-    for rule in build_rules(ctx):
+
+    rules: list[Rule] = [*build_always_on_rules(ctx)]
+    repo_cwd = Path(ctx.cwd) if ctx.cwd else Path.cwd()
+
+    if mode == "repo_strict" and not is_path_skipped(repo_cwd, ctx.config.skip_paths):
+        rules.extend(build_repo_strict_rules(ctx))
+
+    for rule in rules:
         if rule.supports(ctx.event_name) and rule.rule_id not in disabled:
             _run_rule(rule, ctx, platform, acc)
     _safe_enrich(ctx, platform, acc)
@@ -235,26 +260,6 @@ def render_output(
     )
 
 
-def _check_skip(ctx: HookContext, platform: str) -> EngineResult | None:
-    """Return an early EngineResult if the repo is disabled or skipped."""
-    repo_cwd = Path(ctx.cwd) if ctx.cwd else Path.cwd()
-    if not (
-        is_repo_disabled(repo_cwd) or is_path_skipped(repo_cwd, ctx.config.skip_paths)
-    ):
-        return None
-    ctx.trace.result(
-        {
-            "platform": platform,
-            "event_name": ctx.event_name,
-            "session_id": ctx.session_id,
-            "skipped": True,
-            "reason": "repo disabled or path skipped",
-            "cwd": str(repo_cwd),
-        }
-    )
-    return EngineResult(event_name=ctx.event_name)
-
-
 def evaluate_payload(
     payload_dict: Mapping[str, object],
     platform: str = "claude",
@@ -262,9 +267,7 @@ def evaluate_payload(
     adapter = get_adapter(platform)
     ctx = build_context(adapter.normalize_payload(payload_dict))
 
-    skipped = _check_skip(ctx, platform)
-    if skipped is not None:
-        return skipped
+    enforcement_mode = _resolve_enforcement_mode(ctx)
 
     ctx.trace.event(
         {
@@ -274,10 +277,11 @@ def evaluate_payload(
             "tool_name": ctx.tool_name,
             "candidate_paths": ctx.candidate_paths,
             "languages": sorted(ctx.languages),
+            "enforcement_mode": enforcement_mode,
         }
     )
 
-    acc = _run_rules(ctx, platform)
+    acc = _run_rules(ctx, platform, enforcement_mode)
     output = render_output(ctx, acc.findings, adapter=adapter)
 
     ctx.trace.result(
@@ -289,6 +293,7 @@ def evaluate_payload(
             "findings": _serialize_findings(acc.findings),
             "errors": acc.errors,
             "output": output,
+            "enforcement_mode": enforcement_mode,
         }
     )
     return EngineResult(

@@ -57,7 +57,16 @@ def _vibeforcer_env(tmp_path: Path) -> Generator[None, None, None]:
     _ = os.environ.pop("CLAUDE_HOOK_LAYER_ROOT", None)
     _ = os.environ.pop("HOOK_LAYER_ROOT", None)
 
+    enrollment_marker = BUNDLE_ROOT / "quality_gate.toml"
+    created_enrollment_marker = False
+    if not enrollment_marker.exists():
+        enrollment_marker.write_text("[quality_gate]\nenabled = true\n", encoding="utf-8")
+        created_enrollment_marker = True
+
     yield
+
+    if created_enrollment_marker:
+        enrollment_marker.unlink(missing_ok=True)
 
     # Restore
     if old_root is None:
@@ -84,7 +93,15 @@ def load_fixture() -> Callable[[str], ObjectDict]:
     def _load(name: str) -> ObjectDict:
         fixture_path = BUNDLE_ROOT / "fixtures" / name
         raw = fixture_path.read_text(encoding="utf-8")
-        return object_dict(cast(object, json.loads(raw)))
+        payload = object_dict(cast(object, json.loads(raw)))
+        cwd = payload.get("cwd")
+        if cwd is None:
+            payload["cwd"] = str(BUNDLE_ROOT)
+        else:
+            cwd_path = Path(str(cwd))
+            if not cwd_path.exists():
+                payload["cwd"] = str(BUNDLE_ROOT)
+        return payload
 
     return _load
 
@@ -102,6 +119,9 @@ def tmp_project(tmp_path: Path) -> Generator[Path, None, None]:
     project_dir.mkdir(exist_ok=True)
     (project_dir / "logs").mkdir(exist_ok=True)
     (project_dir / "logs" / "async").mkdir(exist_ok=True)
+    _ = (project_dir / "quality_gate.toml").write_text(
+        "[quality_gate]\nenabled = true\n", encoding="utf-8"
+    )
 
     # Copy prompt context
     if (_RESOURCES / "prompt_context").exists():
@@ -136,6 +156,9 @@ def langgraph_project(tmp_path: Path) -> Generator[Path, None, None]:
     (tmp_path / "src").mkdir(exist_ok=True)
     (tmp_path / "logs").mkdir(exist_ok=True)
     (tmp_path / "logs" / "async").mkdir(exist_ok=True)
+    _ = (tmp_path / "quality_gate.toml").write_text(
+        "[quality_gate]\nenabled = true\n", encoding="utf-8"
+    )
 
     old_root = os.environ.get("VIBEFORCER_ROOT")
     os.environ["VIBEFORCER_ROOT"] = str(tmp_path)
