@@ -170,7 +170,7 @@ def _structure_hash(canonical: str) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
-def _is_import_stmt(stmt: ast.stmt) -> bool:
+def _is_import_stmt(stmt: ast.stmt) -> TypeGuard[ast.Import | ast.ImportFrom]:
     """Return True when *stmt* is a plain or from-import statement."""
     return isinstance(stmt, (ast.Import, ast.ImportFrom))
 

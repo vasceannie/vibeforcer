@@ -7,19 +7,26 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from time import time
+from types import ModuleType
 from typing import TextIO, cast
 
 from vibeforcer.util.logger import warning
 
+fcntl: ModuleType | None
 try:
-    import fcntl
+    import fcntl as _fcntl
 except ImportError:  # pragma: no cover - Windows only
     fcntl = None
+else:
+    fcntl = _fcntl
 
+msvcrt: ModuleType | None
 try:
-    import msvcrt
+    import msvcrt as _msvcrt
 except ImportError:  # pragma: no cover - POSIX only
     msvcrt = None
+else:
+    msvcrt = _msvcrt
 
 
 class HookStateStore:

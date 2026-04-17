@@ -137,13 +137,6 @@ def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
     return body[1:] if is_doc else body
 
 
-def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
-    return [
-        s for s in body
-        if not (isinstance(s, ast.ImportFrom) and s.module == "__future__")
-    ]
-
-
 def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
     """Remove the contiguous top-of-file docstring/import preamble."""
     idx = 0

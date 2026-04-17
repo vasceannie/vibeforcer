@@ -1449,3 +1449,1917 @@ index ea4ad1173de0a18f7c55ce3c9ad3d39676854f17..4ead7303b08fdc73803978a1a5c03cc2
 
 ----- PATCH END -----
 
+[2026-04-17T07:45:09.838891040+00:00] apply_result: mode=preflight id=task_e_69e1e20002e483268723e295e10c63dd status=Error applied=0 skipped=1 conflicts=0 cmd=(cd /home/trav/.openclaw/workspace-hooker/vibeforcer && git apply --check /tmp/.tmpCAefKl/patch.diff)
+stdout_tail=
+
+stderr_tail=
+error: patch failed: src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py:1
+error: src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py: patch does not apply
+
+patch_summary: kind=git-diff lines=439 chars=16361 cwd=/home/trav/.openclaw/workspace-hooker/vibeforcer ; head=
+diff --git a/src/vibeforcer/lint/_detectors/duplicates.py b/src/vibeforcer/lint/_detectors/duplicates.py
+index a18d2dc6112d4fab5234ef8d8f73c14683a30b80..22b16cdc0f545cf2e1f5ba95bfcb124ea11d8ac9 100644
+--- a/src/vibeforcer/lint/_detectors/duplicates.py
++++ b/src/vibeforcer/lint/_detectors/duplicates.py
+@@ -162,50 +162,71 @@ def _normalize_ast(node: ast.AST) -> str:
+             normalizer.call_func_ids.add(id(child.func))
+     _ = cast(object, normalizer.visit(tree))
+     _ = ast.fix_missing_locations(tree)
+     return ast.dump(tree)
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is a plain or from-import statement."""
+     return isinstance(stm…
+----- PATCH BEGIN -----
+diff --git a/src/vibeforcer/lint/_detectors/duplicates.py b/src/vibeforcer/lint/_detectors/duplicates.py
+index a18d2dc6112d4fab5234ef8d8f73c14683a30b80..22b16cdc0f545cf2e1f5ba95bfcb124ea11d8ac9 100644
+--- a/src/vibeforcer/lint/_detectors/duplicates.py
++++ b/src/vibeforcer/lint/_detectors/duplicates.py
+@@ -162,50 +162,71 @@ def _normalize_ast(node: ast.AST) -> str:
+             normalizer.call_func_ids.add(id(child.func))
+     _ = cast(object, normalizer.visit(tree))
+     _ = ast.fix_missing_locations(tree)
+     return ast.dump(tree)
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is a plain or from-import statement."""
+     return isinstance(stmt, (ast.Import, ast.ImportFrom))
+ 
+ 
+ def _is_future_import(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is ``from __future__ import ...``."""
+     return isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__"
+ 
+ 
+ def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
+     """Remove leading ``from __future__ import ...`` statements from *body*."""
+     return [s for s in body if not _is_future_import(s)]
+ 
+ 
++def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
++    """Remove contiguous top-of-file docstring/import preamble from *body*."""
++    idx = 0
++    if idx < len(body):
++        first = body[idx]
++        is_doc = (
++            isinstance(first, ast.Expr)
++            and isinstance(first.value, ast.Constant)
++            and isinstance(first.value.value, str)
++        )
++        if is_doc:
++            idx += 1
++    while idx < len(body):
++        stmt = body[idx]
++        if _is_future_import(stmt) or _is_import_stmt(stmt):
++            idx += 1
++            continue
++        break
++    return body[idx:]
++
++
+ def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+     """Return body with the leading docstring removed, if present."""
+     if not body:
+         return body
+     first = body[0]
+     is_doc = (
+         isinstance(first, ast.Expr)
+         and isinstance(first.value, ast.Constant)
+         and isinstance(first.value.value, str)
+     )
+     return body[1:] if is_doc else body
+ 
+ 
+ def _has_skip_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+     for dec in node.decorator_list:
+         if isinstance(dec, ast.Name):
+             name = dec.id
+         elif isinstance(dec, ast.Attribute):
+             name = dec.attr
+         else:
+             name = ""
+         if name in _SKIP_DECORATORS:
+             return True
+     return False
+ 
+@@ -348,51 +369,51 @@ def detect_repeated_literals(
+         if len(fset) > cfg.max_repeated_string_literals:
+             violations.append(
+                 Violation(
+                     rule="repeated-string-literal",
+                     relative_path="<project>",
+                     identifier=repr(val)[:40],
+                     detail=f"appears in {len(fset)} files (max: {cfg.max_repeated_string_literals})",
+                 )
+             )
+     return violations
+ 
+ 
+ _MIN_BLOCK_SIZE = 3
+ 
+ 
+ def _collect_block_windows(
+     parsed: list[ParsedFile],
+ ) -> dict[str, list[tuple[str, str, int, int]]]:
+     """Hash sliding windows of consecutive statements across all scopes."""
+     groups: dict[str, list[tuple[str, str, int, int]]] = defaultdict(list)
+     for pf in parsed:
+         for node in ast.walk(pf.tree):
+             if isinstance(node, _FUNC_TYPES):
+                 body, scope = _skip_docstring(node.body), node.name
+             elif isinstance(node, ast.Module):
+-                body, scope = _strip_future_imports(node.body), "<module>"
++                body, scope = _strip_module_preamble(node.body), "<module>"
+             else:
+                 continue
+             if len(body) < _MIN_BLOCK_SIZE:
+                 continue
+             norms = [_normalize_ast(stmt) for stmt in body]
+             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
+                 if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                     continue
+                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
+                 end = _end_lineno(body[i + _MIN_BLOCK_SIZE - 1], body[i].lineno)
+                 groups[h].append((pf.rel, scope, body[i].lineno, end))
+     return groups
+ 
+ 
+ def detect_repeated_blocks(
+     files: list[Path] | list[ParsedFile] | None = None,
+ ) -> list[Violation]:
+     """Find blocks of consecutive statements that appear in multiple places."""
+     parsed = ensure_parsed(files, fallback=find_source_files())
+     groups = _collect_block_windows(parsed)
+ 
+     violations: list[Violation] = []
+     for h, members in groups.items():
+         if len(members) < 2:
+             continue
+diff --git a/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py b/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
+index 12cfacf1eb8b1ff351f77f49d42e6efee837fe0d..152424a468c0d83ed341f5ebdddec40fb726bbd4 100644
+--- a/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
++++ b/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
+@@ -1,39 +1,40 @@
+ """PY-DUP-001 through PY-DUP-004: Duplicate-code hook rules.
+ 
+ These rules port the lint-only duplicate detectors into reactive hooks so
+ that repeated code blocks, duplicate call sequences, semantic clones, and
+ repeated magic numbers are caught at write time, not just at lint time.
+ 
+ Staging: not yet registered in the rule registry.
+ """
+ 
+ from __future__ import annotations
+ 
+ import ast
+ import copy
+ import hashlib
++import warnings
+ from collections import defaultdict
+ from typing import TYPE_CHECKING, final
+ from typing_extensions import override
+ 
+ from vibeforcer.models import RuleFinding, Severity
+ from vibeforcer.rules.base import Rule, is_rule_enabled
+ from vibeforcer.util.payloads import is_bash_tool, is_edit_like_tool
+ 
+ from .._helpers import (
+     decision_for_context,
+     evaluate_common,
+     parse_module,
+ )
+ 
+ if TYPE_CHECKING:
+     from vibeforcer.context import HookContext
+ 
+ # ---------------------------------------------------------------------------
+ # Shared helpers
+ # ---------------------------------------------------------------------------
+ 
+ _BUILTINS = frozenset({
+     "len", "range", "print", "str", "int", "float", "bool", "list", "dict",
+     "set", "tuple", "type", "isinstance", "issubclass", "hasattr", "getattr",
+     "setattr", "delattr", "super", "property", "staticmethod", "classmethod",
+@@ -118,50 +119,71 @@ def _normalize_ast(node: ast.AST) -> str:
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+     if not body:
+         return body
+     first = body[0]
+     is_doc = (
+         isinstance(first, ast.Expr)
+         and isinstance(first.value, ast.Constant)
+         and isinstance(first.value.value, str)
+     )
+     return body[1:] if is_doc else body
+ 
+ 
+ def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
+     return [
+         s for s in body
+         if not (isinstance(s, ast.ImportFrom) and s.module == "__future__")
+     ]
+ 
+ 
++def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
++    """Remove contiguous module docstring/import preamble from top of file."""
++    idx = 0
++    if idx < len(body):
++        first = body[idx]
++        is_doc = (
++            isinstance(first, ast.Expr)
++            and isinstance(first.value, ast.Constant)
++            and isinstance(first.value.value, str)
++        )
++        if is_doc:
++            idx += 1
++    while idx < len(body):
++        stmt = body[idx]
++        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
++            idx += 1
++            continue
++        break
++    return body[idx:]
++
++
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     return isinstance(stmt, (ast.Import, ast.ImportFrom))
+ 
+ 
+ def _has_skip_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+     for dec in node.decorator_list:
+         name = ""
+         if isinstance(dec, ast.Name):
+             name = dec.id
+         elif isinstance(dec, ast.Attribute):
+             name = dec.attr
+         if name in _SKIP_DECORATORS:
+             return True
+     return False
+ 
+ 
+ def _call_target_name(node: ast.Call) -> str:
+     """Extract a human-readable call target name."""
+     func = node.func
+     if isinstance(func, ast.Name):
+         return func.id
+     if isinstance(func, ast.Attribute):
+         return func.attr
+     return "<unknown>"
+ 
+@@ -206,60 +228,67 @@ def _build_parent_map(tree: ast.Module) -> dict[int, ast.AST]:
+ 
+ 
+ # ---------------------------------------------------------------------------
+ # PY-DUP-001: Repeated code blocks (inline duplication within a file)
+ # ---------------------------------------------------------------------------
+ 
+ @final
+ class PythonRepeatedBlocksRule(Rule):
+     """Detect blocks of 3+ consecutive statements that appear multiple times
+     in the same file.  Catches copy-paste sprawl at write time.
+ 
+     This is a single-file check: it only scans the file being written,
+     not the whole project.  Full cross-file detection remains a lint-only
+     concern (too expensive for a reactive hook).
+     """
+ 
+     rule_id = "PY-DUP-001"
+     title = "Block repeated code blocks"
+     events = ("PreToolUse", "PermissionRequest", "PostToolUse")
+ 
+     def _check_source(
+         self, source: str, path_value: str, ctx: HookContext
+     ) -> list[RuleFinding]:
+         module = parse_module(source, ctx.config.python_ast_max_parse_chars)
+         if module is None:
++            warnings.warn(
++                (
++                    "PY-DUP-001 fallback: source parse failed, "
++                    "skipping AST duplicate detection for this file."
++                ),
++                stacklevel=2,
++            )
+             return []
+ 
+         # Collect all sliding windows across all scopes in this file
+         groups: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+         for node in ast.walk(module):
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                 body = _skip_docstring(node.body)
+                 scope = node.name
+             elif isinstance(node, ast.Module):
+-                body = _strip_future_imports(node.body)
++                body = _strip_module_preamble(node.body)
+                 scope = "<module>"
+             else:
+                 continue
+             if len(body) < _MIN_BLOCK_SIZE:
+                 continue
+             norms = [_normalize_ast(stmt) for stmt in body]
+             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
+                 # Skip pure-import blocks
+                 if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                     continue
+                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
+                 end_lineno = body[i + _MIN_BLOCK_SIZE - 1].end_lineno or body[i].lineno
+                 groups[h].append((scope, body[i].lineno, end_lineno))
+ 
+         findings: list[RuleFinding] = []
+         for h, members in groups.items():
+             if len(members) < 2:
+                 continue
+             # Report the worst offender
+             worst = max(members, key=lambda m: m[2] - m[1])
+             scope, start, end = worst
+             other_locs = [
+                 f"{s}:{st}-{e}" for s, st, e in members if (s, st, e) != worst
+             ]
+             findings.append(RuleFinding(
+diff --git a/tests/test_duplicate_detector.py b/tests/test_duplicate_detector.py
+index ea4ad1173de0a18f7c55ce3c9ad3d39676854f17..4ead7303b08fdc73803978a1a5c03cc2e5dec457 100644
+--- a/tests/test_duplicate_detector.py
++++ b/tests/test_duplicate_detector.py
+@@ -1,68 +1,115 @@
+ """Tests for import-only window exclusion in _collect_block_windows."""
+ # pyright: reportPrivateUsage=false
+ from __future__ import annotations
+ 
+ import ast
+ from pathlib import Path
+ 
+-from vibeforcer.lint._detectors.duplicates import _collect_block_windows
++from vibeforcer.lint._detectors.duplicates import (
++    _collect_block_windows,
++    detect_repeated_blocks,
++)
+ from vibeforcer.lint._helpers import (
+     ParsedFile,
+     build_parent_map,
+     compute_string_line_ranges,
+ )
+ 
+ 
+ def _make_parsed(source: str, rel: str = "test.py") -> ParsedFile:
+     tree = ast.parse(source)
+     return ParsedFile(
+         path=Path(rel),
+         rel=rel,
+         tree=tree,
+         lines=source.splitlines(),
+         parent_map=build_parent_map(tree),
+         string_line_ranges=compute_string_line_ranges(tree),
+     )
+ 
+ 
+ class TestCollectBlockWindowsImportExclusion:
+     def test_pure_import_window_not_hashed(self):
+         """A module-level body of 3 import statements produces no block windows."""
+         source = "import os\nimport sys\nimport json\n"
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
+ 
+     def test_same_import_block_in_two_files_no_violation(self):
+         """Identical 3-import headers across files produce no repeated-code-block."""
+         source = "import os\nimport sys\nimport json\n"
+         pf1 = _make_parsed(source, rel="a.py")
+         pf2 = _make_parsed(source, rel="b.py")
+         groups = _collect_block_windows([pf1, pf2])
+         assert len(groups) == 0
+ 
+-    def test_mixed_window_still_detected(self):
+-        """A window with 2 imports + 1 assignment IS included."""
++    def test_top_preamble_with_assignment_is_excluded(self):
++        """Top-of-file import preamble is excluded even when followed by code."""
+         source = "import os\nimport sys\nx = 1\n"
+         groups = _collect_block_windows([_make_parsed(source)])
+-        assert len(groups) > 0
++        assert len(groups) == 0
+ 
+     def test_from_import_window_excluded(self):
+         """from-import statements are also excluded when all-import."""
+         source = (
+             "from os import path\n"
+             "from sys import argv\n"
+             "from json import dumps\n"
+         )
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
+ 
+     def test_all_import_body_in_function_excluded(self):
+         """Import statements inside a function body are also excluded."""
+         source = (
+             "def setup():\n"
+             "    import os\n"
+             "    import sys\n"
+             "    import json\n"
+         )
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
++
++    def test_matching_top_import_preambles_do_not_count_as_duplicates(self):
++        """Identical module import headers are excluded from duplicate scoring."""
++        source_a = (
++            '"""Shared docstring."""\n'
++            "from __future__ import annotations\n"
++            "import os\n"
++            "import sys\n"
++            "alpha = 1\n"
++            "beta = alpha + 2\n"
++            "print(beta)\n"
++        )
++        source_b = (
++            '"""Shared docstring."""\n'
++            "from __future__ import annotations\n"
++            "import os\n"
++            "import sys\n"
++            "gamma = 100\n"
++            "delta = gamma - 7\n"
++            "print(delta)\n"
++        )
++        violations = detect_repeated_blocks(
++            [_make_parsed(source_a, rel="a.py"), _make_parsed(source_b, rel="b.py")]
++        )
++        assert violations == []
++
++    def test_duplicate_function_bodies_still_trigger(self):
++        """Real duplicate function bodies still produce repeated-code findings."""
++        source_a = (
++            "def first():\n"
++            "    data = load_items()\n"
++            "    normalized = normalize(data)\n"
++            "    return persist(normalized)\n"
++        )
++        source_b = (
++            "def second():\n"
++            "    payload = load_items()\n"
++            "    cleaned = normalize(payload)\n"
++            "    return persist(cleaned)\n"
++        )
++        violations = detect_repeated_blocks(
++            [_make_parsed(source_a, rel="a.py"), _make_parsed(source_b, rel="b.py")]
++        )
++        assert any(v.rule == "repeated-code-block" for v in violations)
+
+----- PATCH END -----
+
+[2026-04-17T07:45:28.764521174+00:00] http.list_tasks: env=69e174706d748191be9d51c765165eba limit=20 cursor_in=<none> cursor_out=<none> items=18
+[2026-04-17T07:45:28.764619551+00:00] refresh.apply: env=69e174706d748191be9d51c765165eba count=13
+[2026-04-17T07:45:48.716510430+00:00] apply_result: mode=preflight id=task_e_69e1e20002e483268723e295e10c63dd status=Error applied=0 skipped=3 conflicts=0 cmd=(cd /home/trav/.openclaw/workspace-hooker/vibeforcer && git apply --check /tmp/.tmpioVR9r/patch.diff)
+stdout_tail=
+
+stderr_tail=
+error: patch failed: src/vibeforcer/lint/_detectors/duplicates.py:162
+error: src/vibeforcer/lint/_detectors/duplicates.py: patch does not apply
+error: patch failed: src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py:1
+error: src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py: patch does not apply
+error: patch failed: tests/test_duplicate_detector.py:1
+error: tests/test_duplicate_detector.py: patch does not apply
+
+patch_summary: kind=git-diff lines=439 chars=16361 cwd=/home/trav/.openclaw/workspace-hooker/vibeforcer ; head=
+diff --git a/src/vibeforcer/lint/_detectors/duplicates.py b/src/vibeforcer/lint/_detectors/duplicates.py
+index a18d2dc6112d4fab5234ef8d8f73c14683a30b80..22b16cdc0f545cf2e1f5ba95bfcb124ea11d8ac9 100644
+--- a/src/vibeforcer/lint/_detectors/duplicates.py
++++ b/src/vibeforcer/lint/_detectors/duplicates.py
+@@ -162,50 +162,71 @@ def _normalize_ast(node: ast.AST) -> str:
+             normalizer.call_func_ids.add(id(child.func))
+     _ = cast(object, normalizer.visit(tree))
+     _ = ast.fix_missing_locations(tree)
+     return ast.dump(tree)
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is a plain or from-import statement."""
+     return isinstance(stm…
+----- PATCH BEGIN -----
+diff --git a/src/vibeforcer/lint/_detectors/duplicates.py b/src/vibeforcer/lint/_detectors/duplicates.py
+index a18d2dc6112d4fab5234ef8d8f73c14683a30b80..22b16cdc0f545cf2e1f5ba95bfcb124ea11d8ac9 100644
+--- a/src/vibeforcer/lint/_detectors/duplicates.py
++++ b/src/vibeforcer/lint/_detectors/duplicates.py
+@@ -162,50 +162,71 @@ def _normalize_ast(node: ast.AST) -> str:
+             normalizer.call_func_ids.add(id(child.func))
+     _ = cast(object, normalizer.visit(tree))
+     _ = ast.fix_missing_locations(tree)
+     return ast.dump(tree)
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is a plain or from-import statement."""
+     return isinstance(stmt, (ast.Import, ast.ImportFrom))
+ 
+ 
+ def _is_future_import(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is ``from __future__ import ...``."""
+     return isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__"
+ 
+ 
+ def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
+     """Remove leading ``from __future__ import ...`` statements from *body*."""
+     return [s for s in body if not _is_future_import(s)]
+ 
+ 
++def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
++    """Remove contiguous top-of-file docstring/import preamble from *body*."""
++    idx = 0
++    if idx < len(body):
++        first = body[idx]
++        is_doc = (
++            isinstance(first, ast.Expr)
++            and isinstance(first.value, ast.Constant)
++            and isinstance(first.value.value, str)
++        )
++        if is_doc:
++            idx += 1
++    while idx < len(body):
++        stmt = body[idx]
++        if _is_future_import(stmt) or _is_import_stmt(stmt):
++            idx += 1
++            continue
++        break
++    return body[idx:]
++
++
+ def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+     """Return body with the leading docstring removed, if present."""
+     if not body:
+         return body
+     first = body[0]
+     is_doc = (
+         isinstance(first, ast.Expr)
+         and isinstance(first.value, ast.Constant)
+         and isinstance(first.value.value, str)
+     )
+     return body[1:] if is_doc else body
+ 
+ 
+ def _has_skip_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+     for dec in node.decorator_list:
+         if isinstance(dec, ast.Name):
+             name = dec.id
+         elif isinstance(dec, ast.Attribute):
+             name = dec.attr
+         else:
+             name = ""
+         if name in _SKIP_DECORATORS:
+             return True
+     return False
+ 
+@@ -348,51 +369,51 @@ def detect_repeated_literals(
+         if len(fset) > cfg.max_repeated_string_literals:
+             violations.append(
+                 Violation(
+                     rule="repeated-string-literal",
+                     relative_path="<project>",
+                     identifier=repr(val)[:40],
+                     detail=f"appears in {len(fset)} files (max: {cfg.max_repeated_string_literals})",
+                 )
+             )
+     return violations
+ 
+ 
+ _MIN_BLOCK_SIZE = 3
+ 
+ 
+ def _collect_block_windows(
+     parsed: list[ParsedFile],
+ ) -> dict[str, list[tuple[str, str, int, int]]]:
+     """Hash sliding windows of consecutive statements across all scopes."""
+     groups: dict[str, list[tuple[str, str, int, int]]] = defaultdict(list)
+     for pf in parsed:
+         for node in ast.walk(pf.tree):
+             if isinstance(node, _FUNC_TYPES):
+                 body, scope = _skip_docstring(node.body), node.name
+             elif isinstance(node, ast.Module):
+-                body, scope = _strip_future_imports(node.body), "<module>"
++                body, scope = _strip_module_preamble(node.body), "<module>"
+             else:
+                 continue
+             if len(body) < _MIN_BLOCK_SIZE:
+                 continue
+             norms = [_normalize_ast(stmt) for stmt in body]
+             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
+                 if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                     continue
+                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
+                 end = _end_lineno(body[i + _MIN_BLOCK_SIZE - 1], body[i].lineno)
+                 groups[h].append((pf.rel, scope, body[i].lineno, end))
+     return groups
+ 
+ 
+ def detect_repeated_blocks(
+     files: list[Path] | list[ParsedFile] | None = None,
+ ) -> list[Violation]:
+     """Find blocks of consecutive statements that appear in multiple places."""
+     parsed = ensure_parsed(files, fallback=find_source_files())
+     groups = _collect_block_windows(parsed)
+ 
+     violations: list[Violation] = []
+     for h, members in groups.items():
+         if len(members) < 2:
+             continue
+diff --git a/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py b/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
+index 12cfacf1eb8b1ff351f77f49d42e6efee837fe0d..152424a468c0d83ed341f5ebdddec40fb726bbd4 100644
+--- a/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
++++ b/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
+@@ -1,39 +1,40 @@
+ """PY-DUP-001 through PY-DUP-004: Duplicate-code hook rules.
+ 
+ These rules port the lint-only duplicate detectors into reactive hooks so
+ that repeated code blocks, duplicate call sequences, semantic clones, and
+ repeated magic numbers are caught at write time, not just at lint time.
+ 
+ Staging: not yet registered in the rule registry.
+ """
+ 
+ from __future__ import annotations
+ 
+ import ast
+ import copy
+ import hashlib
++import warnings
+ from collections import defaultdict
+ from typing import TYPE_CHECKING, final
+ from typing_extensions import override
+ 
+ from vibeforcer.models import RuleFinding, Severity
+ from vibeforcer.rules.base import Rule, is_rule_enabled
+ from vibeforcer.util.payloads import is_bash_tool, is_edit_like_tool
+ 
+ from .._helpers import (
+     decision_for_context,
+     evaluate_common,
+     parse_module,
+ )
+ 
+ if TYPE_CHECKING:
+     from vibeforcer.context import HookContext
+ 
+ # ---------------------------------------------------------------------------
+ # Shared helpers
+ # ---------------------------------------------------------------------------
+ 
+ _BUILTINS = frozenset({
+     "len", "range", "print", "str", "int", "float", "bool", "list", "dict",
+     "set", "tuple", "type", "isinstance", "issubclass", "hasattr", "getattr",
+     "setattr", "delattr", "super", "property", "staticmethod", "classmethod",
+@@ -118,50 +119,71 @@ def _normalize_ast(node: ast.AST) -> str:
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+     if not body:
+         return body
+     first = body[0]
+     is_doc = (
+         isinstance(first, ast.Expr)
+         and isinstance(first.value, ast.Constant)
+         and isinstance(first.value.value, str)
+     )
+     return body[1:] if is_doc else body
+ 
+ 
+ def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
+     return [
+         s for s in body
+         if not (isinstance(s, ast.ImportFrom) and s.module == "__future__")
+     ]
+ 
+ 
++def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
++    """Remove contiguous module docstring/import preamble from top of file."""
++    idx = 0
++    if idx < len(body):
++        first = body[idx]
++        is_doc = (
++            isinstance(first, ast.Expr)
++            and isinstance(first.value, ast.Constant)
++            and isinstance(first.value.value, str)
++        )
++        if is_doc:
++            idx += 1
++    while idx < len(body):
++        stmt = body[idx]
++        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
++            idx += 1
++            continue
++        break
++    return body[idx:]
++
++
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     return isinstance(stmt, (ast.Import, ast.ImportFrom))
+ 
+ 
+ def _has_skip_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+     for dec in node.decorator_list:
+         name = ""
+         if isinstance(dec, ast.Name):
+             name = dec.id
+         elif isinstance(dec, ast.Attribute):
+             name = dec.attr
+         if name in _SKIP_DECORATORS:
+             return True
+     return False
+ 
+ 
+ def _call_target_name(node: ast.Call) -> str:
+     """Extract a human-readable call target name."""
+     func = node.func
+     if isinstance(func, ast.Name):
+         return func.id
+     if isinstance(func, ast.Attribute):
+         return func.attr
+     return "<unknown>"
+ 
+@@ -206,60 +228,67 @@ def _build_parent_map(tree: ast.Module) -> dict[int, ast.AST]:
+ 
+ 
+ # ---------------------------------------------------------------------------
+ # PY-DUP-001: Repeated code blocks (inline duplication within a file)
+ # ---------------------------------------------------------------------------
+ 
+ @final
+ class PythonRepeatedBlocksRule(Rule):
+     """Detect blocks of 3+ consecutive statements that appear multiple times
+     in the same file.  Catches copy-paste sprawl at write time.
+ 
+     This is a single-file check: it only scans the file being written,
+     not the whole project.  Full cross-file detection remains a lint-only
+     concern (too expensive for a reactive hook).
+     """
+ 
+     rule_id = "PY-DUP-001"
+     title = "Block repeated code blocks"
+     events = ("PreToolUse", "PermissionRequest", "PostToolUse")
+ 
+     def _check_source(
+         self, source: str, path_value: str, ctx: HookContext
+     ) -> list[RuleFinding]:
+         module = parse_module(source, ctx.config.python_ast_max_parse_chars)
+         if module is None:
++            warnings.warn(
++                (
++                    "PY-DUP-001 fallback: source parse failed, "
++                    "skipping AST duplicate detection for this file."
++                ),
++                stacklevel=2,
++            )
+             return []
+ 
+         # Collect all sliding windows across all scopes in this file
+         groups: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+         for node in ast.walk(module):
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                 body = _skip_docstring(node.body)
+                 scope = node.name
+             elif isinstance(node, ast.Module):
+-                body = _strip_future_imports(node.body)
++                body = _strip_module_preamble(node.body)
+                 scope = "<module>"
+             else:
+                 continue
+             if len(body) < _MIN_BLOCK_SIZE:
+                 continue
+             norms = [_normalize_ast(stmt) for stmt in body]
+             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
+                 # Skip pure-import blocks
+                 if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                     continue
+                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
+                 end_lineno = body[i + _MIN_BLOCK_SIZE - 1].end_lineno or body[i].lineno
+                 groups[h].append((scope, body[i].lineno, end_lineno))
+ 
+         findings: list[RuleFinding] = []
+         for h, members in groups.items():
+             if len(members) < 2:
+                 continue
+             # Report the worst offender
+             worst = max(members, key=lambda m: m[2] - m[1])
+             scope, start, end = worst
+             other_locs = [
+                 f"{s}:{st}-{e}" for s, st, e in members if (s, st, e) != worst
+             ]
+             findings.append(RuleFinding(
+diff --git a/tests/test_duplicate_detector.py b/tests/test_duplicate_detector.py
+index ea4ad1173de0a18f7c55ce3c9ad3d39676854f17..4ead7303b08fdc73803978a1a5c03cc2e5dec457 100644
+--- a/tests/test_duplicate_detector.py
++++ b/tests/test_duplicate_detector.py
+@@ -1,68 +1,115 @@
+ """Tests for import-only window exclusion in _collect_block_windows."""
+ # pyright: reportPrivateUsage=false
+ from __future__ import annotations
+ 
+ import ast
+ from pathlib import Path
+ 
+-from vibeforcer.lint._detectors.duplicates import _collect_block_windows
++from vibeforcer.lint._detectors.duplicates import (
++    _collect_block_windows,
++    detect_repeated_blocks,
++)
+ from vibeforcer.lint._helpers import (
+     ParsedFile,
+     build_parent_map,
+     compute_string_line_ranges,
+ )
+ 
+ 
+ def _make_parsed(source: str, rel: str = "test.py") -> ParsedFile:
+     tree = ast.parse(source)
+     return ParsedFile(
+         path=Path(rel),
+         rel=rel,
+         tree=tree,
+         lines=source.splitlines(),
+         parent_map=build_parent_map(tree),
+         string_line_ranges=compute_string_line_ranges(tree),
+     )
+ 
+ 
+ class TestCollectBlockWindowsImportExclusion:
+     def test_pure_import_window_not_hashed(self):
+         """A module-level body of 3 import statements produces no block windows."""
+         source = "import os\nimport sys\nimport json\n"
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
+ 
+     def test_same_import_block_in_two_files_no_violation(self):
+         """Identical 3-import headers across files produce no repeated-code-block."""
+         source = "import os\nimport sys\nimport json\n"
+         pf1 = _make_parsed(source, rel="a.py")
+         pf2 = _make_parsed(source, rel="b.py")
+         groups = _collect_block_windows([pf1, pf2])
+         assert len(groups) == 0
+ 
+-    def test_mixed_window_still_detected(self):
+-        """A window with 2 imports + 1 assignment IS included."""
++    def test_top_preamble_with_assignment_is_excluded(self):
++        """Top-of-file import preamble is excluded even when followed by code."""
+         source = "import os\nimport sys\nx = 1\n"
+         groups = _collect_block_windows([_make_parsed(source)])
+-        assert len(groups) > 0
++        assert len(groups) == 0
+ 
+     def test_from_import_window_excluded(self):
+         """from-import statements are also excluded when all-import."""
+         source = (
+             "from os import path\n"
+             "from sys import argv\n"
+             "from json import dumps\n"
+         )
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
+ 
+     def test_all_import_body_in_function_excluded(self):
+         """Import statements inside a function body are also excluded."""
+         source = (
+             "def setup():\n"
+             "    import os\n"
+             "    import sys\n"
+             "    import json\n"
+         )
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
++
++    def test_matching_top_import_preambles_do_not_count_as_duplicates(self):
++        """Identical module import headers are excluded from duplicate scoring."""
++        source_a = (
++            '"""Shared docstring."""\n'
++            "from __future__ import annotations\n"
++            "import os\n"
++            "import sys\n"
++            "alpha = 1\n"
++            "beta = alpha + 2\n"
++            "print(beta)\n"
++        )
++        source_b = (
++            '"""Shared docstring."""\n'
++            "from __future__ import annotations\n"
++            "import os\n"
++            "import sys\n"
++            "gamma = 100\n"
++            "delta = gamma - 7\n"
++            "print(delta)\n"
++        )
++        violations = detect_repeated_blocks(
++            [_make_parsed(source_a, rel="a.py"), _make_parsed(source_b, rel="b.py")]
++        )
++        assert violations == []
++
++    def test_duplicate_function_bodies_still_trigger(self):
++        """Real duplicate function bodies still produce repeated-code findings."""
++        source_a = (
++            "def first():\n"
++            "    data = load_items()\n"
++            "    normalized = normalize(data)\n"
++            "    return persist(normalized)\n"
++        )
++        source_b = (
++            "def second():\n"
++            "    payload = load_items()\n"
++            "    cleaned = normalize(payload)\n"
++            "    return persist(cleaned)\n"
++        )
++        violations = detect_repeated_blocks(
++            [_make_parsed(source_a, rel="a.py"), _make_parsed(source_b, rel="b.py")]
++        )
++        assert any(v.rule == "repeated-code-block" for v in violations)
+
+----- PATCH END -----
+
+[2026-04-17T07:46:19.625383943+00:00] apply_result: mode=preflight id=task_e_69e1e20002e483268723e295e10c63dd status=Error applied=0 skipped=3 conflicts=0 cmd=(cd /home/trav/.openclaw/workspace-hooker/vibeforcer && git apply --check /tmp/.tmp9FSVd4/patch.diff)
+stdout_tail=
+
+stderr_tail=
+error: patch failed: src/vibeforcer/lint/_detectors/duplicates.py:162
+error: src/vibeforcer/lint/_detectors/duplicates.py: patch does not apply
+error: patch failed: src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py:1
+error: src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py: patch does not apply
+error: patch failed: tests/test_duplicate_detector.py:1
+error: tests/test_duplicate_detector.py: patch does not apply
+
+patch_summary: kind=git-diff lines=439 chars=16361 cwd=/home/trav/.openclaw/workspace-hooker/vibeforcer ; head=
+diff --git a/src/vibeforcer/lint/_detectors/duplicates.py b/src/vibeforcer/lint/_detectors/duplicates.py
+index a18d2dc6112d4fab5234ef8d8f73c14683a30b80..22b16cdc0f545cf2e1f5ba95bfcb124ea11d8ac9 100644
+--- a/src/vibeforcer/lint/_detectors/duplicates.py
++++ b/src/vibeforcer/lint/_detectors/duplicates.py
+@@ -162,50 +162,71 @@ def _normalize_ast(node: ast.AST) -> str:
+             normalizer.call_func_ids.add(id(child.func))
+     _ = cast(object, normalizer.visit(tree))
+     _ = ast.fix_missing_locations(tree)
+     return ast.dump(tree)
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is a plain or from-import statement."""
+     return isinstance(stm…
+----- PATCH BEGIN -----
+diff --git a/src/vibeforcer/lint/_detectors/duplicates.py b/src/vibeforcer/lint/_detectors/duplicates.py
+index a18d2dc6112d4fab5234ef8d8f73c14683a30b80..22b16cdc0f545cf2e1f5ba95bfcb124ea11d8ac9 100644
+--- a/src/vibeforcer/lint/_detectors/duplicates.py
++++ b/src/vibeforcer/lint/_detectors/duplicates.py
+@@ -162,50 +162,71 @@ def _normalize_ast(node: ast.AST) -> str:
+             normalizer.call_func_ids.add(id(child.func))
+     _ = cast(object, normalizer.visit(tree))
+     _ = ast.fix_missing_locations(tree)
+     return ast.dump(tree)
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is a plain or from-import statement."""
+     return isinstance(stmt, (ast.Import, ast.ImportFrom))
+ 
+ 
+ def _is_future_import(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is ``from __future__ import ...``."""
+     return isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__"
+ 
+ 
+ def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
+     """Remove leading ``from __future__ import ...`` statements from *body*."""
+     return [s for s in body if not _is_future_import(s)]
+ 
+ 
++def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
++    """Remove contiguous top-of-file docstring/import preamble from *body*."""
++    idx = 0
++    if idx < len(body):
++        first = body[idx]
++        is_doc = (
++            isinstance(first, ast.Expr)
++            and isinstance(first.value, ast.Constant)
++            and isinstance(first.value.value, str)
++        )
++        if is_doc:
++            idx += 1
++    while idx < len(body):
++        stmt = body[idx]
++        if _is_future_import(stmt) or _is_import_stmt(stmt):
++            idx += 1
++            continue
++        break
++    return body[idx:]
++
++
+ def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+     """Return body with the leading docstring removed, if present."""
+     if not body:
+         return body
+     first = body[0]
+     is_doc = (
+         isinstance(first, ast.Expr)
+         and isinstance(first.value, ast.Constant)
+         and isinstance(first.value.value, str)
+     )
+     return body[1:] if is_doc else body
+ 
+ 
+ def _has_skip_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+     for dec in node.decorator_list:
+         if isinstance(dec, ast.Name):
+             name = dec.id
+         elif isinstance(dec, ast.Attribute):
+             name = dec.attr
+         else:
+             name = ""
+         if name in _SKIP_DECORATORS:
+             return True
+     return False
+ 
+@@ -348,51 +369,51 @@ def detect_repeated_literals(
+         if len(fset) > cfg.max_repeated_string_literals:
+             violations.append(
+                 Violation(
+                     rule="repeated-string-literal",
+                     relative_path="<project>",
+                     identifier=repr(val)[:40],
+                     detail=f"appears in {len(fset)} files (max: {cfg.max_repeated_string_literals})",
+                 )
+             )
+     return violations
+ 
+ 
+ _MIN_BLOCK_SIZE = 3
+ 
+ 
+ def _collect_block_windows(
+     parsed: list[ParsedFile],
+ ) -> dict[str, list[tuple[str, str, int, int]]]:
+     """Hash sliding windows of consecutive statements across all scopes."""
+     groups: dict[str, list[tuple[str, str, int, int]]] = defaultdict(list)
+     for pf in parsed:
+         for node in ast.walk(pf.tree):
+             if isinstance(node, _FUNC_TYPES):
+                 body, scope = _skip_docstring(node.body), node.name
+             elif isinstance(node, ast.Module):
+-                body, scope = _strip_future_imports(node.body), "<module>"
++                body, scope = _strip_module_preamble(node.body), "<module>"
+             else:
+                 continue
+             if len(body) < _MIN_BLOCK_SIZE:
+                 continue
+             norms = [_normalize_ast(stmt) for stmt in body]
+             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
+                 if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                     continue
+                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
+                 end = _end_lineno(body[i + _MIN_BLOCK_SIZE - 1], body[i].lineno)
+                 groups[h].append((pf.rel, scope, body[i].lineno, end))
+     return groups
+ 
+ 
+ def detect_repeated_blocks(
+     files: list[Path] | list[ParsedFile] | None = None,
+ ) -> list[Violation]:
+     """Find blocks of consecutive statements that appear in multiple places."""
+     parsed = ensure_parsed(files, fallback=find_source_files())
+     groups = _collect_block_windows(parsed)
+ 
+     violations: list[Violation] = []
+     for h, members in groups.items():
+         if len(members) < 2:
+             continue
+diff --git a/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py b/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
+index 12cfacf1eb8b1ff351f77f49d42e6efee837fe0d..152424a468c0d83ed341f5ebdddec40fb726bbd4 100644
+--- a/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
++++ b/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
+@@ -1,39 +1,40 @@
+ """PY-DUP-001 through PY-DUP-004: Duplicate-code hook rules.
+ 
+ These rules port the lint-only duplicate detectors into reactive hooks so
+ that repeated code blocks, duplicate call sequences, semantic clones, and
+ repeated magic numbers are caught at write time, not just at lint time.
+ 
+ Staging: not yet registered in the rule registry.
+ """
+ 
+ from __future__ import annotations
+ 
+ import ast
+ import copy
+ import hashlib
++import warnings
+ from collections import defaultdict
+ from typing import TYPE_CHECKING, final
+ from typing_extensions import override
+ 
+ from vibeforcer.models import RuleFinding, Severity
+ from vibeforcer.rules.base import Rule, is_rule_enabled
+ from vibeforcer.util.payloads import is_bash_tool, is_edit_like_tool
+ 
+ from .._helpers import (
+     decision_for_context,
+     evaluate_common,
+     parse_module,
+ )
+ 
+ if TYPE_CHECKING:
+     from vibeforcer.context import HookContext
+ 
+ # ---------------------------------------------------------------------------
+ # Shared helpers
+ # ---------------------------------------------------------------------------
+ 
+ _BUILTINS = frozenset({
+     "len", "range", "print", "str", "int", "float", "bool", "list", "dict",
+     "set", "tuple", "type", "isinstance", "issubclass", "hasattr", "getattr",
+     "setattr", "delattr", "super", "property", "staticmethod", "classmethod",
+@@ -118,50 +119,71 @@ def _normalize_ast(node: ast.AST) -> str:
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+     if not body:
+         return body
+     first = body[0]
+     is_doc = (
+         isinstance(first, ast.Expr)
+         and isinstance(first.value, ast.Constant)
+         and isinstance(first.value.value, str)
+     )
+     return body[1:] if is_doc else body
+ 
+ 
+ def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
+     return [
+         s for s in body
+         if not (isinstance(s, ast.ImportFrom) and s.module == "__future__")
+     ]
+ 
+ 
++def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
++    """Remove contiguous module docstring/import preamble from top of file."""
++    idx = 0
++    if idx < len(body):
++        first = body[idx]
++        is_doc = (
++            isinstance(first, ast.Expr)
++            and isinstance(first.value, ast.Constant)
++            and isinstance(first.value.value, str)
++        )
++        if is_doc:
++            idx += 1
++    while idx < len(body):
++        stmt = body[idx]
++        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
++            idx += 1
++            continue
++        break
++    return body[idx:]
++
++
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     return isinstance(stmt, (ast.Import, ast.ImportFrom))
+ 
+ 
+ def _has_skip_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+     for dec in node.decorator_list:
+         name = ""
+         if isinstance(dec, ast.Name):
+             name = dec.id
+         elif isinstance(dec, ast.Attribute):
+             name = dec.attr
+         if name in _SKIP_DECORATORS:
+             return True
+     return False
+ 
+ 
+ def _call_target_name(node: ast.Call) -> str:
+     """Extract a human-readable call target name."""
+     func = node.func
+     if isinstance(func, ast.Name):
+         return func.id
+     if isinstance(func, ast.Attribute):
+         return func.attr
+     return "<unknown>"
+ 
+@@ -206,60 +228,67 @@ def _build_parent_map(tree: ast.Module) -> dict[int, ast.AST]:
+ 
+ 
+ # ---------------------------------------------------------------------------
+ # PY-DUP-001: Repeated code blocks (inline duplication within a file)
+ # ---------------------------------------------------------------------------
+ 
+ @final
+ class PythonRepeatedBlocksRule(Rule):
+     """Detect blocks of 3+ consecutive statements that appear multiple times
+     in the same file.  Catches copy-paste sprawl at write time.
+ 
+     This is a single-file check: it only scans the file being written,
+     not the whole project.  Full cross-file detection remains a lint-only
+     concern (too expensive for a reactive hook).
+     """
+ 
+     rule_id = "PY-DUP-001"
+     title = "Block repeated code blocks"
+     events = ("PreToolUse", "PermissionRequest", "PostToolUse")
+ 
+     def _check_source(
+         self, source: str, path_value: str, ctx: HookContext
+     ) -> list[RuleFinding]:
+         module = parse_module(source, ctx.config.python_ast_max_parse_chars)
+         if module is None:
++            warnings.warn(
++                (
++                    "PY-DUP-001 fallback: source parse failed, "
++                    "skipping AST duplicate detection for this file."
++                ),
++                stacklevel=2,
++            )
+             return []
+ 
+         # Collect all sliding windows across all scopes in this file
+         groups: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+         for node in ast.walk(module):
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                 body = _skip_docstring(node.body)
+                 scope = node.name
+             elif isinstance(node, ast.Module):
+-                body = _strip_future_imports(node.body)
++                body = _strip_module_preamble(node.body)
+                 scope = "<module>"
+             else:
+                 continue
+             if len(body) < _MIN_BLOCK_SIZE:
+                 continue
+             norms = [_normalize_ast(stmt) for stmt in body]
+             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
+                 # Skip pure-import blocks
+                 if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                     continue
+                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
+                 end_lineno = body[i + _MIN_BLOCK_SIZE - 1].end_lineno or body[i].lineno
+                 groups[h].append((scope, body[i].lineno, end_lineno))
+ 
+         findings: list[RuleFinding] = []
+         for h, members in groups.items():
+             if len(members) < 2:
+                 continue
+             # Report the worst offender
+             worst = max(members, key=lambda m: m[2] - m[1])
+             scope, start, end = worst
+             other_locs = [
+                 f"{s}:{st}-{e}" for s, st, e in members if (s, st, e) != worst
+             ]
+             findings.append(RuleFinding(
+diff --git a/tests/test_duplicate_detector.py b/tests/test_duplicate_detector.py
+index ea4ad1173de0a18f7c55ce3c9ad3d39676854f17..4ead7303b08fdc73803978a1a5c03cc2e5dec457 100644
+--- a/tests/test_duplicate_detector.py
++++ b/tests/test_duplicate_detector.py
+@@ -1,68 +1,115 @@
+ """Tests for import-only window exclusion in _collect_block_windows."""
+ # pyright: reportPrivateUsage=false
+ from __future__ import annotations
+ 
+ import ast
+ from pathlib import Path
+ 
+-from vibeforcer.lint._detectors.duplicates import _collect_block_windows
++from vibeforcer.lint._detectors.duplicates import (
++    _collect_block_windows,
++    detect_repeated_blocks,
++)
+ from vibeforcer.lint._helpers import (
+     ParsedFile,
+     build_parent_map,
+     compute_string_line_ranges,
+ )
+ 
+ 
+ def _make_parsed(source: str, rel: str = "test.py") -> ParsedFile:
+     tree = ast.parse(source)
+     return ParsedFile(
+         path=Path(rel),
+         rel=rel,
+         tree=tree,
+         lines=source.splitlines(),
+         parent_map=build_parent_map(tree),
+         string_line_ranges=compute_string_line_ranges(tree),
+     )
+ 
+ 
+ class TestCollectBlockWindowsImportExclusion:
+     def test_pure_import_window_not_hashed(self):
+         """A module-level body of 3 import statements produces no block windows."""
+         source = "import os\nimport sys\nimport json\n"
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
+ 
+     def test_same_import_block_in_two_files_no_violation(self):
+         """Identical 3-import headers across files produce no repeated-code-block."""
+         source = "import os\nimport sys\nimport json\n"
+         pf1 = _make_parsed(source, rel="a.py")
+         pf2 = _make_parsed(source, rel="b.py")
+         groups = _collect_block_windows([pf1, pf2])
+         assert len(groups) == 0
+ 
+-    def test_mixed_window_still_detected(self):
+-        """A window with 2 imports + 1 assignment IS included."""
++    def test_top_preamble_with_assignment_is_excluded(self):
++        """Top-of-file import preamble is excluded even when followed by code."""
+         source = "import os\nimport sys\nx = 1\n"
+         groups = _collect_block_windows([_make_parsed(source)])
+-        assert len(groups) > 0
++        assert len(groups) == 0
+ 
+     def test_from_import_window_excluded(self):
+         """from-import statements are also excluded when all-import."""
+         source = (
+             "from os import path\n"
+             "from sys import argv\n"
+             "from json import dumps\n"
+         )
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
+ 
+     def test_all_import_body_in_function_excluded(self):
+         """Import statements inside a function body are also excluded."""
+         source = (
+             "def setup():\n"
+             "    import os\n"
+             "    import sys\n"
+             "    import json\n"
+         )
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
++
++    def test_matching_top_import_preambles_do_not_count_as_duplicates(self):
++        """Identical module import headers are excluded from duplicate scoring."""
++        source_a = (
++            '"""Shared docstring."""\n'
++            "from __future__ import annotations\n"
++            "import os\n"
++            "import sys\n"
++            "alpha = 1\n"
++            "beta = alpha + 2\n"
++            "print(beta)\n"
++        )
++        source_b = (
++            '"""Shared docstring."""\n'
++            "from __future__ import annotations\n"
++            "import os\n"
++            "import sys\n"
++            "gamma = 100\n"
++            "delta = gamma - 7\n"
++            "print(delta)\n"
++        )
++        violations = detect_repeated_blocks(
++            [_make_parsed(source_a, rel="a.py"), _make_parsed(source_b, rel="b.py")]
++        )
++        assert violations == []
++
++    def test_duplicate_function_bodies_still_trigger(self):
++        """Real duplicate function bodies still produce repeated-code findings."""
++        source_a = (
++            "def first():\n"
++            "    data = load_items()\n"
++            "    normalized = normalize(data)\n"
++            "    return persist(normalized)\n"
++        )
++        source_b = (
++            "def second():\n"
++            "    payload = load_items()\n"
++            "    cleaned = normalize(payload)\n"
++            "    return persist(cleaned)\n"
++        )
++        violations = detect_repeated_blocks(
++            [_make_parsed(source_a, rel="a.py"), _make_parsed(source_b, rel="b.py")]
++        )
++        assert any(v.rule == "repeated-code-block" for v in violations)
+
+----- PATCH END -----
+
+[2026-04-17T07:48:01.357856952+00:00] refresh.request: env=69e174706d748191be9d51c765165eba
+[2026-04-17T07:48:01.645980526+00:00] http.list_tasks: env=69e174706d748191be9d51c765165eba limit=20 cursor_in=<none> cursor_out=<none> items=18
+[2026-04-17T07:48:01.646072843+00:00] refresh.apply: env=69e174706d748191be9d51c765165eba count=13
+[2026-04-17T07:48:32.430822708+00:00] startup: base_url=https://chatgpt.com/backend-api path_style=wham
+[2026-04-17T07:48:32.447351603+00:00] auth: mode=ChatGPT account_id=d4534aa7-2595-4628-a95d-18a282fb9b64
+[2026-04-17T07:48:32.447395031+00:00] auth: set ChatGPT-Account-Id header: d4534aa7-2595-4628-a95d-18a282fb9b64
+[2026-04-17T07:48:32.453533477+00:00] startup: wham_force_internal=false ua=codex_cli_rs/0.121.0 (Ubuntu 24.4.0; x86_64) xterm-256color (codex_cloud_tasks_tui)
+[2026-04-17T07:48:32.491711724+00:00] env: parsed HTTP GitHub origin => vasceannie/vibeforcer
+[2026-04-17T07:48:32.491968286+00:00] env: git origins: ["https://github.com/vasceannie/vibeforcer.git", "https://lab.baked.rocks/claude/vibeforcer.git"]
+[2026-04-17T07:48:32.492001954+00:00] env: parsed HTTP GitHub origin => vasceannie/vibeforcer
+[2026-04-17T07:48:32.492030373+00:00] env: GET https://chatgpt.com/backend-api/wham/environments/by-repo/github/vasceannie/vibeforcer
+[2026-04-17T07:48:32.762989916+00:00] http.list_tasks: env=<all> limit=20 cursor_in=<none> cursor_out=<none> items=18
+[2026-04-17T07:48:32.763079363+00:00] refresh.apply: env=<all> count=13
+[2026-04-17T07:48:33.133500356+00:00] env: status=200 OK content-type=application/json
+[2026-04-17T07:48:33.157838463+00:00] env: status=200 OK content-type=application/json
+[2026-04-17T07:48:33.157960769+00:00] env: by-repo returned 1 env(s) for vasceannie/vibeforcer
+[2026-04-17T07:48:33.158002587+00:00] env: single environment available; selecting it
+[2026-04-17T07:48:33.158160003+00:00] env.select: autodetected id=69e174706d748191be9d51c765165eba label=vasceannie/vibeforcer
+[2026-04-17T07:48:33.180503183+00:00] env: parsed HTTP GitHub origin => vasceannie/vibeforcer
+[2026-04-17T07:48:33.319007373+00:00] env: status=200 OK content-type=application/json
+[2026-04-17T07:48:33.820916639+00:00] env: status=200 OK content-type=application/json
+[2026-04-17T07:48:33.868241355+00:00] http.list_tasks: env=69e174706d748191be9d51c765165eba limit=20 cursor_in=<none> cursor_out=<none> items=18
+[2026-04-17T07:48:33.868371471+00:00] refresh.apply: env=69e174706d748191be9d51c765165eba count=13
+[2026-04-17T07:48:33.995551921+00:00] env: status=200 OK content-type=application/json
+[2026-04-17T07:48:43.356792187+00:00] apply_result: mode=preflight id=task_e_69e1e20002e483268723e295e10c63dd status=Error applied=0 skipped=3 conflicts=0 cmd=(cd /home/trav/.openclaw/workspace-hooker/vibeforcer && git apply --check /tmp/.tmpKYaJCD/patch.diff)
+stdout_tail=
+
+stderr_tail=
+error: patch failed: src/vibeforcer/lint/_detectors/duplicates.py:162
+error: src/vibeforcer/lint/_detectors/duplicates.py: patch does not apply
+error: patch failed: src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py:1
+error: src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py: patch does not apply
+error: patch failed: tests/test_duplicate_detector.py:1
+error: tests/test_duplicate_detector.py: patch does not apply
+
+patch_summary: kind=git-diff lines=439 chars=16361 cwd=/home/trav/.openclaw/workspace-hooker/vibeforcer ; head=
+diff --git a/src/vibeforcer/lint/_detectors/duplicates.py b/src/vibeforcer/lint/_detectors/duplicates.py
+index a18d2dc6112d4fab5234ef8d8f73c14683a30b80..22b16cdc0f545cf2e1f5ba95bfcb124ea11d8ac9 100644
+--- a/src/vibeforcer/lint/_detectors/duplicates.py
++++ b/src/vibeforcer/lint/_detectors/duplicates.py
+@@ -162,50 +162,71 @@ def _normalize_ast(node: ast.AST) -> str:
+             normalizer.call_func_ids.add(id(child.func))
+     _ = cast(object, normalizer.visit(tree))
+     _ = ast.fix_missing_locations(tree)
+     return ast.dump(tree)
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is a plain or from-import statement."""
+     return isinstance(stm…
+----- PATCH BEGIN -----
+diff --git a/src/vibeforcer/lint/_detectors/duplicates.py b/src/vibeforcer/lint/_detectors/duplicates.py
+index a18d2dc6112d4fab5234ef8d8f73c14683a30b80..22b16cdc0f545cf2e1f5ba95bfcb124ea11d8ac9 100644
+--- a/src/vibeforcer/lint/_detectors/duplicates.py
++++ b/src/vibeforcer/lint/_detectors/duplicates.py
+@@ -162,50 +162,71 @@ def _normalize_ast(node: ast.AST) -> str:
+             normalizer.call_func_ids.add(id(child.func))
+     _ = cast(object, normalizer.visit(tree))
+     _ = ast.fix_missing_locations(tree)
+     return ast.dump(tree)
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is a plain or from-import statement."""
+     return isinstance(stmt, (ast.Import, ast.ImportFrom))
+ 
+ 
+ def _is_future_import(stmt: ast.stmt) -> bool:
+     """Return True when *stmt* is ``from __future__ import ...``."""
+     return isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__"
+ 
+ 
+ def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
+     """Remove leading ``from __future__ import ...`` statements from *body*."""
+     return [s for s in body if not _is_future_import(s)]
+ 
+ 
++def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
++    """Remove contiguous top-of-file docstring/import preamble from *body*."""
++    idx = 0
++    if idx < len(body):
++        first = body[idx]
++        is_doc = (
++            isinstance(first, ast.Expr)
++            and isinstance(first.value, ast.Constant)
++            and isinstance(first.value.value, str)
++        )
++        if is_doc:
++            idx += 1
++    while idx < len(body):
++        stmt = body[idx]
++        if _is_future_import(stmt) or _is_import_stmt(stmt):
++            idx += 1
++            continue
++        break
++    return body[idx:]
++
++
+ def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+     """Return body with the leading docstring removed, if present."""
+     if not body:
+         return body
+     first = body[0]
+     is_doc = (
+         isinstance(first, ast.Expr)
+         and isinstance(first.value, ast.Constant)
+         and isinstance(first.value.value, str)
+     )
+     return body[1:] if is_doc else body
+ 
+ 
+ def _has_skip_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+     for dec in node.decorator_list:
+         if isinstance(dec, ast.Name):
+             name = dec.id
+         elif isinstance(dec, ast.Attribute):
+             name = dec.attr
+         else:
+             name = ""
+         if name in _SKIP_DECORATORS:
+             return True
+     return False
+ 
+@@ -348,51 +369,51 @@ def detect_repeated_literals(
+         if len(fset) > cfg.max_repeated_string_literals:
+             violations.append(
+                 Violation(
+                     rule="repeated-string-literal",
+                     relative_path="<project>",
+                     identifier=repr(val)[:40],
+                     detail=f"appears in {len(fset)} files (max: {cfg.max_repeated_string_literals})",
+                 )
+             )
+     return violations
+ 
+ 
+ _MIN_BLOCK_SIZE = 3
+ 
+ 
+ def _collect_block_windows(
+     parsed: list[ParsedFile],
+ ) -> dict[str, list[tuple[str, str, int, int]]]:
+     """Hash sliding windows of consecutive statements across all scopes."""
+     groups: dict[str, list[tuple[str, str, int, int]]] = defaultdict(list)
+     for pf in parsed:
+         for node in ast.walk(pf.tree):
+             if isinstance(node, _FUNC_TYPES):
+                 body, scope = _skip_docstring(node.body), node.name
+             elif isinstance(node, ast.Module):
+-                body, scope = _strip_future_imports(node.body), "<module>"
++                body, scope = _strip_module_preamble(node.body), "<module>"
+             else:
+                 continue
+             if len(body) < _MIN_BLOCK_SIZE:
+                 continue
+             norms = [_normalize_ast(stmt) for stmt in body]
+             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
+                 if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                     continue
+                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
+                 end = _end_lineno(body[i + _MIN_BLOCK_SIZE - 1], body[i].lineno)
+                 groups[h].append((pf.rel, scope, body[i].lineno, end))
+     return groups
+ 
+ 
+ def detect_repeated_blocks(
+     files: list[Path] | list[ParsedFile] | None = None,
+ ) -> list[Violation]:
+     """Find blocks of consecutive statements that appear in multiple places."""
+     parsed = ensure_parsed(files, fallback=find_source_files())
+     groups = _collect_block_windows(parsed)
+ 
+     violations: list[Violation] = []
+     for h, members in groups.items():
+         if len(members) < 2:
+             continue
+diff --git a/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py b/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
+index 12cfacf1eb8b1ff351f77f49d42e6efee837fe0d..152424a468c0d83ed341f5ebdddec40fb726bbd4 100644
+--- a/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
++++ b/src/vibeforcer/rules/python_ast/_staging/duplicate_rules.py
+@@ -1,39 +1,40 @@
+ """PY-DUP-001 through PY-DUP-004: Duplicate-code hook rules.
+ 
+ These rules port the lint-only duplicate detectors into reactive hooks so
+ that repeated code blocks, duplicate call sequences, semantic clones, and
+ repeated magic numbers are caught at write time, not just at lint time.
+ 
+ Staging: not yet registered in the rule registry.
+ """
+ 
+ from __future__ import annotations
+ 
+ import ast
+ import copy
+ import hashlib
++import warnings
+ from collections import defaultdict
+ from typing import TYPE_CHECKING, final
+ from typing_extensions import override
+ 
+ from vibeforcer.models import RuleFinding, Severity
+ from vibeforcer.rules.base import Rule, is_rule_enabled
+ from vibeforcer.util.payloads import is_bash_tool, is_edit_like_tool
+ 
+ from .._helpers import (
+     decision_for_context,
+     evaluate_common,
+     parse_module,
+ )
+ 
+ if TYPE_CHECKING:
+     from vibeforcer.context import HookContext
+ 
+ # ---------------------------------------------------------------------------
+ # Shared helpers
+ # ---------------------------------------------------------------------------
+ 
+ _BUILTINS = frozenset({
+     "len", "range", "print", "str", "int", "float", "bool", "list", "dict",
+     "set", "tuple", "type", "isinstance", "issubclass", "hasattr", "getattr",
+     "setattr", "delattr", "super", "property", "staticmethod", "classmethod",
+@@ -118,50 +119,71 @@ def _normalize_ast(node: ast.AST) -> str:
+ 
+ 
+ def _structure_hash(canonical: str) -> str:
+     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+ 
+ 
+ def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+     if not body:
+         return body
+     first = body[0]
+     is_doc = (
+         isinstance(first, ast.Expr)
+         and isinstance(first.value, ast.Constant)
+         and isinstance(first.value.value, str)
+     )
+     return body[1:] if is_doc else body
+ 
+ 
+ def _strip_future_imports(body: list[ast.stmt]) -> list[ast.stmt]:
+     return [
+         s for s in body
+         if not (isinstance(s, ast.ImportFrom) and s.module == "__future__")
+     ]
+ 
+ 
++def _strip_module_preamble(body: list[ast.stmt]) -> list[ast.stmt]:
++    """Remove contiguous module docstring/import preamble from top of file."""
++    idx = 0
++    if idx < len(body):
++        first = body[idx]
++        is_doc = (
++            isinstance(first, ast.Expr)
++            and isinstance(first.value, ast.Constant)
++            and isinstance(first.value.value, str)
++        )
++        if is_doc:
++            idx += 1
++    while idx < len(body):
++        stmt = body[idx]
++        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
++            idx += 1
++            continue
++        break
++    return body[idx:]
++
++
+ def _is_import_stmt(stmt: ast.stmt) -> bool:
+     return isinstance(stmt, (ast.Import, ast.ImportFrom))
+ 
+ 
+ def _has_skip_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+     for dec in node.decorator_list:
+         name = ""
+         if isinstance(dec, ast.Name):
+             name = dec.id
+         elif isinstance(dec, ast.Attribute):
+             name = dec.attr
+         if name in _SKIP_DECORATORS:
+             return True
+     return False
+ 
+ 
+ def _call_target_name(node: ast.Call) -> str:
+     """Extract a human-readable call target name."""
+     func = node.func
+     if isinstance(func, ast.Name):
+         return func.id
+     if isinstance(func, ast.Attribute):
+         return func.attr
+     return "<unknown>"
+ 
+@@ -206,60 +228,67 @@ def _build_parent_map(tree: ast.Module) -> dict[int, ast.AST]:
+ 
+ 
+ # ---------------------------------------------------------------------------
+ # PY-DUP-001: Repeated code blocks (inline duplication within a file)
+ # ---------------------------------------------------------------------------
+ 
+ @final
+ class PythonRepeatedBlocksRule(Rule):
+     """Detect blocks of 3+ consecutive statements that appear multiple times
+     in the same file.  Catches copy-paste sprawl at write time.
+ 
+     This is a single-file check: it only scans the file being written,
+     not the whole project.  Full cross-file detection remains a lint-only
+     concern (too expensive for a reactive hook).
+     """
+ 
+     rule_id = "PY-DUP-001"
+     title = "Block repeated code blocks"
+     events = ("PreToolUse", "PermissionRequest", "PostToolUse")
+ 
+     def _check_source(
+         self, source: str, path_value: str, ctx: HookContext
+     ) -> list[RuleFinding]:
+         module = parse_module(source, ctx.config.python_ast_max_parse_chars)
+         if module is None:
++            warnings.warn(
++                (
++                    "PY-DUP-001 fallback: source parse failed, "
++                    "skipping AST duplicate detection for this file."
++                ),
++                stacklevel=2,
++            )
+             return []
+ 
+         # Collect all sliding windows across all scopes in this file
+         groups: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+         for node in ast.walk(module):
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                 body = _skip_docstring(node.body)
+                 scope = node.name
+             elif isinstance(node, ast.Module):
+-                body = _strip_future_imports(node.body)
++                body = _strip_module_preamble(node.body)
+                 scope = "<module>"
+             else:
+                 continue
+             if len(body) < _MIN_BLOCK_SIZE:
+                 continue
+             norms = [_normalize_ast(stmt) for stmt in body]
+             for i in range(len(norms) - _MIN_BLOCK_SIZE + 1):
+                 # Skip pure-import blocks
+                 if all(_is_import_stmt(body[j]) for j in range(i, i + _MIN_BLOCK_SIZE)):
+                     continue
+                 h = _structure_hash("|".join(norms[i : i + _MIN_BLOCK_SIZE]))
+                 end_lineno = body[i + _MIN_BLOCK_SIZE - 1].end_lineno or body[i].lineno
+                 groups[h].append((scope, body[i].lineno, end_lineno))
+ 
+         findings: list[RuleFinding] = []
+         for h, members in groups.items():
+             if len(members) < 2:
+                 continue
+             # Report the worst offender
+             worst = max(members, key=lambda m: m[2] - m[1])
+             scope, start, end = worst
+             other_locs = [
+                 f"{s}:{st}-{e}" for s, st, e in members if (s, st, e) != worst
+             ]
+             findings.append(RuleFinding(
+diff --git a/tests/test_duplicate_detector.py b/tests/test_duplicate_detector.py
+index ea4ad1173de0a18f7c55ce3c9ad3d39676854f17..4ead7303b08fdc73803978a1a5c03cc2e5dec457 100644
+--- a/tests/test_duplicate_detector.py
++++ b/tests/test_duplicate_detector.py
+@@ -1,68 +1,115 @@
+ """Tests for import-only window exclusion in _collect_block_windows."""
+ # pyright: reportPrivateUsage=false
+ from __future__ import annotations
+ 
+ import ast
+ from pathlib import Path
+ 
+-from vibeforcer.lint._detectors.duplicates import _collect_block_windows
++from vibeforcer.lint._detectors.duplicates import (
++    _collect_block_windows,
++    detect_repeated_blocks,
++)
+ from vibeforcer.lint._helpers import (
+     ParsedFile,
+     build_parent_map,
+     compute_string_line_ranges,
+ )
+ 
+ 
+ def _make_parsed(source: str, rel: str = "test.py") -> ParsedFile:
+     tree = ast.parse(source)
+     return ParsedFile(
+         path=Path(rel),
+         rel=rel,
+         tree=tree,
+         lines=source.splitlines(),
+         parent_map=build_parent_map(tree),
+         string_line_ranges=compute_string_line_ranges(tree),
+     )
+ 
+ 
+ class TestCollectBlockWindowsImportExclusion:
+     def test_pure_import_window_not_hashed(self):
+         """A module-level body of 3 import statements produces no block windows."""
+         source = "import os\nimport sys\nimport json\n"
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
+ 
+     def test_same_import_block_in_two_files_no_violation(self):
+         """Identical 3-import headers across files produce no repeated-code-block."""
+         source = "import os\nimport sys\nimport json\n"
+         pf1 = _make_parsed(source, rel="a.py")
+         pf2 = _make_parsed(source, rel="b.py")
+         groups = _collect_block_windows([pf1, pf2])
+         assert len(groups) == 0
+ 
+-    def test_mixed_window_still_detected(self):
+-        """A window with 2 imports + 1 assignment IS included."""
++    def test_top_preamble_with_assignment_is_excluded(self):
++        """Top-of-file import preamble is excluded even when followed by code."""
+         source = "import os\nimport sys\nx = 1\n"
+         groups = _collect_block_windows([_make_parsed(source)])
+-        assert len(groups) > 0
++        assert len(groups) == 0
+ 
+     def test_from_import_window_excluded(self):
+         """from-import statements are also excluded when all-import."""
+         source = (
+             "from os import path\n"
+             "from sys import argv\n"
+             "from json import dumps\n"
+         )
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
+ 
+     def test_all_import_body_in_function_excluded(self):
+         """Import statements inside a function body are also excluded."""
+         source = (
+             "def setup():\n"
+             "    import os\n"
+             "    import sys\n"
+             "    import json\n"
+         )
+         groups = _collect_block_windows([_make_parsed(source)])
+         assert len(groups) == 0
++
++    def test_matching_top_import_preambles_do_not_count_as_duplicates(self):
++        """Identical module import headers are excluded from duplicate scoring."""
++        source_a = (
++            '"""Shared docstring."""\n'
++            "from __future__ import annotations\n"
++            "import os\n"
++            "import sys\n"
++            "alpha = 1\n"
++            "beta = alpha + 2\n"
++            "print(beta)\n"
++        )
++        source_b = (
++            '"""Shared docstring."""\n'
++            "from __future__ import annotations\n"
++            "import os\n"
++            "import sys\n"
++            "gamma = 100\n"
++            "delta = gamma - 7\n"
++            "print(delta)\n"
++        )
++        violations = detect_repeated_blocks(
++            [_make_parsed(source_a, rel="a.py"), _make_parsed(source_b, rel="b.py")]
++        )
++        assert violations == []
++
++    def test_duplicate_function_bodies_still_trigger(self):
++        """Real duplicate function bodies still produce repeated-code findings."""
++        source_a = (
++            "def first():\n"
++            "    data = load_items()\n"
++            "    normalized = normalize(data)\n"
++            "    return persist(normalized)\n"
++        )
++        source_b = (
++            "def second():\n"
++            "    payload = load_items()\n"
++            "    cleaned = normalize(payload)\n"
++            "    return persist(cleaned)\n"
++        )
++        violations = detect_repeated_blocks(
++            [_make_parsed(source_a, rel="a.py"), _make_parsed(source_b, rel="b.py")]
++        )
++        assert any(v.rule == "repeated-code-block" for v in violations)
+
+----- PATCH END -----
+
