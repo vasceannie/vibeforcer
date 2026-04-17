@@ -6,9 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 from time import time
+from typing import TypedDict
 
 import pytest
 
+from vibeforcer._types import ObjectDict, object_dict, object_list, string_value
 from vibeforcer.adapters import get_adapter
 from vibeforcer.engine import evaluate_payload
 from vibeforcer.models import RuleFinding, Severity
@@ -16,6 +18,68 @@ from vibeforcer.state import HookStateStore
 from tests.support import BUNDLE_ROOT, assert_denied_by, assert_not_denied, finding_ids
 
 _RESOURCES = BUNDLE_ROOT / "src" / "vibeforcer" / "resources"
+
+
+class _SubprocessFinding(TypedDict):
+    rule_id: str
+    decision: str | None
+    severity: str
+    message: str | None
+    metadata: ObjectDict
+
+
+class _SubprocessResult(TypedDict):
+    finding_ids: list[str]
+    findings: list[_SubprocessFinding]
+    output: ObjectDict | None
+
+
+class _InspectableHookStateStore(HookStateStore):
+    def full_read_key(self, session_id: str, path: str) -> str:
+        return self._full_read_key(session_id, path)
+
+    def save_state_for_test(self, state: dict[str, dict[str, int]]) -> None:
+        self._save_state(state)
+
+    @property
+    def ttl_seconds(self) -> int:
+        return self._TTL_SECONDS
+
+    def load_state_for_test(self) -> dict[str, dict[str, int]]:
+        return self._load_state()
+
+
+def _normalize_subprocess_result(raw: object) -> _SubprocessResult:
+    payload = object_dict(raw)
+    raw_finding_ids = object_list(payload.get("finding_ids"))
+    finding_ids_result = [item for item in raw_finding_ids if isinstance(item, str)]
+
+    findings_result: list[_SubprocessFinding] = []
+    for raw_finding in object_list(payload.get("findings")):
+        finding = object_dict(raw_finding)
+        rule_id = string_value(finding.get("rule_id"))
+        severity = string_value(finding.get("severity"))
+        if rule_id is None or severity is None:
+            continue
+        decision = string_value(finding.get("decision"))
+        message = string_value(finding.get("message"))
+        findings_result.append(
+            {
+                "rule_id": rule_id,
+                "decision": decision,
+                "severity": severity,
+                "message": message,
+                "metadata": object_dict(finding.get("metadata")),
+            }
+        )
+
+    raw_output = payload.get("output")
+    output = object_dict(raw_output) if raw_output is not None else None
+    return {
+        "finding_ids": finding_ids_result,
+        "findings": findings_result,
+        "output": output,
+    }
 
 
 def _config_with_enabled_rules(
@@ -117,7 +181,7 @@ def _run_payload_in_subprocess(
     payload: dict[str, object],
     *,
     platform: str = "claude",
-) -> dict[str, object]:
+) -> _SubprocessResult:
     """Run one hook evaluation in a fresh Python process.
 
     Vibeforcer hooks are invoked as subprocesses in production, so this helper keeps
@@ -154,7 +218,7 @@ print(json.dumps({
         check=True,
         env=_python_subprocess_env(),
     )
-    return json.loads(completed.stdout)
+    return _normalize_subprocess_result(json.loads(completed.stdout))
 
 
 def _start_full_read_record_subprocess(
@@ -429,18 +493,20 @@ class TestFullReadStatefulSpec:
 
 class TestHookStateStore:
     def test_ttl_expiry_filters_stale_full_reads(self, tmp_path: Path) -> None:
-        store = HookStateStore(tmp_path)
-        key = store._full_read_key("session-a", str(tmp_path / "module.py"))
-        store._save_state({"full_reads": {key: int(time()) - store._TTL_SECONDS - 5}})
+        store = _InspectableHookStateStore(tmp_path)
+        key = store.full_read_key("session-a", str(tmp_path / "module.py"))
+        store.save_state_for_test(
+            {"full_reads": {key: int(time()) - store.ttl_seconds - 5}}
+        )
 
         assert not store.has_full_read("session-a", str(tmp_path / "module.py"))
 
     def test_parallel_subprocess_writes_complete_without_losing_entries(
         self, tmp_path: Path
     ) -> None:
-        store = HookStateStore(tmp_path)
-        targets = []
-        processes = []
+        store = _InspectableHookStateStore(tmp_path)
+        targets: list[Path] = []
+        processes: list[subprocess.Popen[str]] = []
         for idx in range(8):
             target = tmp_path / f"module_{idx}.py"
             target.write_text(f"value = {idx}\n", encoding="utf-8")
@@ -457,7 +523,7 @@ class TestHookStateStore:
                 raise AssertionError("hook-state write subprocess timed out") from exc
             assert process.returncode == 0, stderr
 
-        state = store._load_state()
+        state = store.load_state_for_test()
         assert len(state["full_reads"]) == len(targets)
         for idx, target in enumerate(targets):
             assert store.has_full_read(f"session-{idx}", str(target))
@@ -745,10 +811,14 @@ class TestRepeatedDebtEscalationSpec:
         )
 
         first_finding = next(
-            item for item in first["findings"] if item["rule_id"] == "PY-CODE-013"
+            item
+            for item in first["findings"]
+            if item["rule_id"] == "PY-CODE-013"
         )
         second_finding = next(
-            item for item in second["findings"] if item["rule_id"] == "PY-CODE-013"
+            item
+            for item in second["findings"]
+            if item["rule_id"] == "PY-CODE-013"
         )
         assert first_finding["metadata"].get("repeat_count") == 1
         assert second_finding["metadata"].get("repeat_count") == 2

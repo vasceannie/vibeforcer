@@ -18,7 +18,6 @@ from typing_extensions import override
 
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule, is_rule_enabled
-from vibeforcer.util.payloads import is_bash_tool, is_edit_like_tool
 
 from .._helpers import (
     decision_for_context,
@@ -119,6 +118,11 @@ def _normalize_ast(node: ast.AST) -> str:
 
 def _structure_hash(canonical: str) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def _finding_count(finding: RuleFinding) -> int:
+    count = finding.metadata.get("count")
+    return count if isinstance(count, int) else 0
 
 
 def _skip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
@@ -488,7 +492,7 @@ class PythonRepeatedMagicNumberRule(Rule):
                 ))
         # Only report the worst offender to avoid noise
         if findings:
-            return [max(findings, key=lambda f: f.metadata.get("count", 0))]
+            return [max(findings, key=_finding_count)]
         return findings
 
     @override

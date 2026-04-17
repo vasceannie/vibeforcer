@@ -32,7 +32,9 @@ def test_lint_baseline_respects_explicit_path() -> None:
     )
 
 
-def test_lint_baseline_help_marks_command_disabled(capsys: object) -> None:
+def test_lint_baseline_help_marks_command_disabled(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["lint", "baseline", "--help"])

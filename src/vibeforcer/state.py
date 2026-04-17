@@ -7,6 +7,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from time import time
+from typing import TextIO, cast
 
 from vibeforcer.util.logger import warning
 
@@ -59,25 +60,25 @@ class HookStateStore:
             finally:
                 self._release_lock(handle)
 
-    def _acquire_lock(self, handle: object) -> None:
-        fileno = handle.fileno()  # type: ignore[attr-defined]
+    def _acquire_lock(self, handle: TextIO) -> None:
+        fileno = handle.fileno()
         if fcntl is not None:
             fcntl.flock(fileno, fcntl.LOCK_EX)
             return
         if msvcrt is not None:  # pragma: no cover - Windows only
-            handle.seek(0)  # type: ignore[attr-defined]
-            handle.write("\0")  # type: ignore[attr-defined]
-            handle.flush()  # type: ignore[attr-defined]
-            handle.seek(0)  # type: ignore[attr-defined]
+            handle.seek(0)
+            handle.write("\0")
+            handle.flush()
+            handle.seek(0)
             msvcrt.locking(fileno, msvcrt.LK_LOCK, 1)
 
-    def _release_lock(self, handle: object) -> None:
-        fileno = handle.fileno()  # type: ignore[attr-defined]
+    def _release_lock(self, handle: TextIO) -> None:
+        fileno = handle.fileno()
         if fcntl is not None:
             fcntl.flock(fileno, fcntl.LOCK_UN)
             return
         if msvcrt is not None:  # pragma: no cover - Windows only
-            handle.seek(0)  # type: ignore[attr-defined]
+            handle.seek(0)
             msvcrt.locking(fileno, msvcrt.LK_UNLCK, 1)
 
     def _full_read_key(self, session_id: str, path: str) -> str:
@@ -95,11 +96,7 @@ class HookStateStore:
     def _load_state(self) -> dict[str, dict[str, int]]:
         cutoff = int(time()) - self._TTL_SECONDS
         state = self._read_state_file()
-        full_reads = {
-            key: int(ts)
-            for key, ts in state.get("full_reads", {}).items()
-            if isinstance(ts, int) and ts >= cutoff
-        }
+        full_reads = self._coerce_full_reads(state.get("full_reads"), cutoff)
         return {"full_reads": full_reads}
 
     def _read_state_file(self) -> dict[str, object]:
@@ -111,7 +108,21 @@ class HookStateStore:
             return {}
         if not isinstance(raw, Mapping):
             return {}
-        return dict(raw)
+        result: dict[str, object] = {}
+        for key, value in cast(Mapping[object, object], raw).items():
+            if isinstance(key, str):
+                result[key] = value
+        return result
+
+    @staticmethod
+    def _coerce_full_reads(raw_full_reads: object, cutoff: int) -> dict[str, int]:
+        if not isinstance(raw_full_reads, Mapping):
+            return {}
+        full_reads: dict[str, int] = {}
+        for key, timestamp in cast(Mapping[object, object], raw_full_reads).items():
+            if isinstance(key, str) and isinstance(timestamp, int) and timestamp >= cutoff:
+                full_reads[key] = timestamp
+        return full_reads
 
     def _save_state(self, state: dict[str, dict[str, int]]) -> None:
         fd, tmp_name = tempfile.mkstemp(

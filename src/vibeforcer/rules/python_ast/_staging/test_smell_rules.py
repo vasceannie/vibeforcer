@@ -10,13 +10,12 @@ Staging: not yet registered in the rule registry.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, final
-from typing_extensions import override
+from typing_extensions import TypeGuard, override
 
 from vibeforcer.models import RuleFinding, Severity
 from vibeforcer.rules.base import Rule, is_rule_enabled
-from vibeforcer.util.payloads import is_bash_tool, is_edit_like_tool
 
 from .._helpers import (
     decision_for_context,
@@ -51,7 +50,9 @@ _IGNORED_SUT_CALLS = frozenset({
 })
 
 
-def _is_test_function(node: ast.AST) -> bool:
+def _is_test_function(
+    node: ast.AST,
+) -> TypeGuard[ast.FunctionDef | ast.AsyncFunctionDef]:
     """True if node is a test function (starts with test_)."""
     return (
         isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -140,9 +141,10 @@ def _contains_assertion(node: ast.AST) -> bool:
     return False
 
 
-def _walk_skip_nested_funcs(node: ast.AST):
+def _walk_skip_nested_funcs(node: ast.AST) -> Iterator[ast.AST]:
     """Walk AST without descending into nested FunctionDef/AsyncFunctionDef."""
     from collections import deque
+
     todo = deque(ast.iter_child_nodes(node))
     while todo:
         child = todo.popleft()

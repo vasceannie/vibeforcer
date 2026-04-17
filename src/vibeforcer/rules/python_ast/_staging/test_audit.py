@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import textwrap
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import cast
 
+from vibeforcer.context import HookContext
 from vibeforcer.models import RuleFinding
+from vibeforcer.rules.base import Rule
 
 # We import the rules directly — they're self-contained
 from .duplicate_rules import (
@@ -56,6 +58,10 @@ class _FakeContext:
     cwd: str = "/tmp"
 
 
+def _evaluate_rule(rule: Rule, ctx: _FakeContext) -> list[RuleFinding]:
+    return rule.evaluate(cast(HookContext, ctx))
+
+
 # ---------------------------------------------------------------------------
 # PY-DUP-001: Repeated code blocks
 # ---------------------------------------------------------------------------
@@ -68,7 +74,7 @@ class TestRepeatedBlocks:
         ctx = _FakeContext(
             content_targets=[_FakeContentTarget(path, source)],
         )
-        return rule.evaluate(ctx)
+        return _evaluate_rule(rule, ctx)
 
     def test_no_false_positive_single_block(self):
         """A function with no repeated blocks should be clean."""
@@ -129,7 +135,7 @@ class TestDuplicateCallSequences:
         ctx = _FakeContext(
             content_targets=[_FakeContentTarget(path, source)],
         )
-        return rule.evaluate(ctx)
+        return _evaluate_rule(rule, ctx)
 
     def test_no_false_positive_short_sequence(self):
         """Functions with <3 shared calls should not trigger."""
@@ -192,7 +198,7 @@ class TestSemanticClones:
         ctx = _FakeContext(
             content_targets=[_FakeContentTarget(path, source)],
         )
-        return rule.evaluate(ctx)
+        return _evaluate_rule(rule, ctx)
 
     def test_detects_parametric_clone(self):
         """Functions that differ only in variable names should be flagged."""
@@ -256,7 +262,7 @@ class TestRepeatedMagicNumbers:
         ctx = _FakeContext(
             content_targets=[_FakeContentTarget(path, source)],
         )
-        return rule.evaluate(ctx)
+        return _evaluate_rule(rule, ctx)
 
     def test_no_false_positive_common_values(self):
         """0, 1, -1, 2 should never trigger."""
@@ -308,7 +314,7 @@ class TestEagerTests:
         ctx = _FakeContext(
             content_targets=[_FakeContentTarget(path, source)],
         )
-        return rule.evaluate(ctx)
+        return _evaluate_rule(rule, ctx)
 
     def test_detects_eager_test(self):
         """A test with >5 SUT calls should trigger."""
@@ -374,7 +380,7 @@ class TestAssertionRoulette:
         ctx = _FakeContext(
             content_targets=[_FakeContentTarget(path, source)],
         )
-        return rule.evaluate(ctx)
+        return _evaluate_rule(rule, ctx)
 
     def test_detects_roulette(self):
         """4+ consecutive bare asserts should trigger."""
@@ -424,7 +430,7 @@ class TestFixtureOutsideConftest:
         ctx = _FakeContext(
             content_targets=[_FakeContentTarget(path, source)],
         )
-        return rule.evaluate(ctx)
+        return _evaluate_rule(rule, ctx)
 
     def test_detects_fixture_in_test_file(self):
         """@pytest.fixture in a test file should trigger."""
@@ -484,7 +490,7 @@ class TestConditionalAssertions:
         ctx = _FakeContext(
             content_targets=[_FakeContentTarget(path, source)],
         )
-        return rule.evaluate(ctx)
+        return _evaluate_rule(rule, ctx)
 
     def test_detects_assertion_in_if(self):
         """Assertions inside if blocks should trigger."""
@@ -534,7 +540,7 @@ class TestConditionalAssertions:
 class TestStability:
     """Ensure rules handle edge cases without crashing."""
 
-    def _eval_all_rules(self, source: str, path: str = "src/example.py"):
+    def _eval_all_rules(self, source: str, path: str = "src/example.py") -> None:
         rules = [
             PythonRepeatedBlocksRule(),
             PythonDuplicateCallSequenceRule(),
@@ -549,7 +555,7 @@ class TestStability:
             ctx = _FakeContext(
                 content_targets=[_FakeContentTarget(path, source)],
             )
-            findings = rule.evaluate(ctx)
+            findings = _evaluate_rule(rule, ctx)
             assert isinstance(findings, list), f"{rule.rule_id} returned non-list"
 
     def test_empty_file(self):
